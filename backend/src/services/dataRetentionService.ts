@@ -38,6 +38,67 @@ export interface CleanupReport {
   dryRun: boolean;
 }
 
+/** Per-record disposition in a cleanup preview. */
+export type CleanupOutcome = "eligible" | "skipped" | "held" | "failed";
+
+export interface CleanupPreviewRecord {
+  /** Primary key of the record (stringified), stable across preview and apply. */
+  id: string;
+  outcome: CleanupOutcome;
+  /** Human-readable reason for the outcome (why eligible / skipped / held / failed). */
+  reason: string;
+}
+
+/**
+ * Deterministic preview of a retention cleanup run: what *would* happen, with a
+ * per-record reason, computed without any destructive change unless `mode` is
+ * `"apply"`. `counts` always sums to `records.length`.
+ */
+export interface CleanupPreview {
+  timestamp: Date;
+  category: string;
+  table: string;
+  mode: "preview" | "apply";
+  counts: {
+    /** Past retention window, unprotected, not held → would be deleted. */
+    eligible: number;
+    /** Retained by a policy protection rule (active/recent/unresolved/…). */
+    skipped: number;
+    /** Under an explicit hold (legal/dispute/audit) — never deleted. */
+    held: number;
+    /** Classification raised an error; treated as retained (never deleted). */
+    failed: number;
+  };
+  /** Per-record dispositions, in a deterministic order (by primary key). */
+  records: CleanupPreviewRecord[];
+  /** Records actually deleted (0 in preview mode; deletes only the eligible set). */
+  applied: number;
+  errors: string[];
+}
+
+/**
+ * Source of explicit retention holds. A hold is a human/compliance decision to
+ * retain a specific record regardless of its age (legal hold, open dispute,
+ * audit freeze). Injected so it is deterministic and testable, and so holds can
+ * live outside this service (a table, a config, an external system) without a
+ * schema migration here.
+ */
+export interface RetentionHoldProvider {
+  /** Return a human reason if `recordId` in `table` is held, else `null`. */
+  heldReason(table: string, recordId: string): Promise<string | null> | string | null;
+}
+
+export interface PreviewOptions {
+  /** When true, delete the eligible set after classifying (default: false). */
+  apply?: boolean;
+  /** Explicit holds to overlay on classification. */
+  holds?: RetentionHoldProvider;
+  /** Max candidate records to classify per call (default 1000). */
+  limit?: number;
+  /** Actor, for the audit log line. */
+  actor?: string;
+}
+
 /**
  * Retention policy definitions
  */
@@ -354,6 +415,281 @@ export class DataRetentionService {
     }
 
     return report;
+  }
+
+  /**
+   * Deterministic preview of a cleanup run for one category.
+   *
+   * Classifies each candidate record as `eligible` (past the retention window,
+   * unprotected, not held), `skipped` (retained by a policy protection rule),
+   * `held` (under an explicit hold from {@link RetentionHoldProvider}), or
+   * `failed` (classification errored). Performs **no destructive change** unless
+   * `opts.apply` is set, in which case it deletes *only* the eligible set —
+   * never a skipped, held, or failed record.
+   *
+   * Ordering is deterministic (by primary key), so the same data yields the same
+   * report. See `docs/runbooks/retention-cleanup-preview.md` for how maintainers
+   * review the output before applying.
+   */
+  async previewCleanup(categoryKey: string, opts?: PreviewOptions): Promise<CleanupPreview> {
+    const policy = RETENTION_POLICIES[categoryKey];
+    if (!policy) {
+      throw new Error(`Unknown retention category: ${categoryKey}`);
+    }
+
+    const mode: "preview" | "apply" = opts?.apply ? "apply" : "preview";
+    const take = opts?.limit ?? 1000;
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - policy.retentionDays * 24 * 60 * 60 * 1000);
+    const base = { category: policy.category, table: policy.table, mode, holds: opts?.holds };
+    const p = this.prisma;
+
+    let preview: CleanupPreview;
+    switch (categoryKey) {
+      case "CHAIN_EVENT": {
+        const rows = await p.chainEvent.findMany({
+          where: { ingestedAt: { lt: cutoff } },
+          orderBy: { id: "asc" },
+          take,
+        });
+        // Protected: events whose tx is still tied to a pending/submitted action.
+        const pendingTx = new Set(
+          (
+            await p.actionLedger.findMany({
+              where: { status: { in: ["pending", "submitted"] } },
+              select: { txHash: true },
+            })
+          )
+            .map((a) => a.txHash)
+            .filter((h): h is string => Boolean(h)),
+        );
+        preview = await this.runPreview(
+          base,
+          rows,
+          (r) => r.id,
+          (r) =>
+            pendingTx.has(r.txHash)
+              ? { eligible: false, reason: "linked to a pending/submitted action" }
+              : { eligible: true, reason: "past retention window; replayable from chain" },
+          (ids) => p.chainEvent.deleteMany({ where: { id: { in: ids } } }).then((r) => r.count),
+        );
+        break;
+      }
+      case "POISON_EVENT": {
+        const rows = await p.poisonEvent.findMany({
+          where: { detectedAt: { lt: cutoff } },
+          orderBy: { id: "asc" },
+          take,
+        });
+        preview = await this.runPreview(
+          base,
+          rows,
+          (r) => r.id,
+          (r) =>
+            r.resolvedAt == null
+              ? { eligible: false, reason: "unresolved — still under investigation" }
+              : { eligible: true, reason: "resolved and past retention window" },
+          (ids) => p.poisonEvent.deleteMany({ where: { id: { in: ids } } }).then((r) => r.count),
+        );
+        break;
+      }
+      case "PENDING_EVENT": {
+        const rows = await p.pendingEvent.findMany({
+          where: { receivedAt: { lt: cutoff } },
+          orderBy: { txHash: "asc" },
+          take,
+        });
+        preview = await this.runPreview(
+          base,
+          rows,
+          (r) => r.txHash,
+          (r) =>
+            r.consumedAt == null
+              ? { eligible: false, reason: "unconsumed — may still be processed" }
+              : { eligible: true, reason: "consumed and past retention window" },
+          (ids) =>
+            p.pendingEvent.deleteMany({ where: { txHash: { in: ids } } }).then((r) => r.count),
+        );
+        break;
+      }
+      case "BACKGROUND_JOB": {
+        const rows = await p.backgroundJob.findMany({
+          where: { updatedAt: { lt: cutoff } },
+          orderBy: { id: "asc" },
+          take,
+        });
+        preview = await this.runPreview(
+          base,
+          rows,
+          (r) => r.id,
+          (r) =>
+            r.status === "completed" || r.status === "failed"
+              ? { eligible: true, reason: `${r.status} and past retention window` }
+              : { eligible: false, reason: `status "${r.status}" — still running` },
+          (ids) => p.backgroundJob.deleteMany({ where: { id: { in: ids } } }).then((r) => r.count),
+        );
+        break;
+      }
+      case "WALLET_CHALLENGE": {
+        const rows = await p.walletChallenge.findMany({
+          where: { expiresAt: { lt: cutoff } },
+          orderBy: { challengeId: "asc" },
+          take,
+        });
+        preview = await this.runPreview(
+          base,
+          rows,
+          (r) => r.challengeId,
+          () => ({ eligible: true, reason: "expired past retention window" }),
+          (ids) =>
+            p.walletChallenge
+              .deleteMany({ where: { challengeId: { in: ids } } })
+              .then((r) => r.count),
+        );
+        break;
+      }
+      case "WALLET_SESSION": {
+        const rows = await p.walletSession.findMany({
+          where: { createdAt: { lt: cutoff } },
+          orderBy: { id: "asc" },
+          take,
+        });
+        preview = await this.runPreview(
+          base,
+          rows,
+          (r) => r.id,
+          (r) =>
+            r.revokedAt != null && r.expiresAt < now
+              ? { eligible: true, reason: "revoked and expired" }
+              : { eligible: false, reason: "active session (not revoked, or not yet expired)" },
+          (ids) =>
+            p.walletSession.deleteMany({ where: { id: { in: ids } } }).then((r) => r.count),
+        );
+        break;
+      }
+      case "ACTION_LEASE": {
+        const rows = await p.actionLease.findMany({ orderBy: { actionId: "asc" }, take });
+        preview = await this.runPreview(
+          base,
+          rows,
+          (r) => r.actionId,
+          (r) =>
+            r.expiresAt < now
+              ? { eligible: true, reason: "lease expired" }
+              : { eligible: false, reason: "lease still valid" },
+          (ids) =>
+            p.actionLease.deleteMany({ where: { actionId: { in: ids } } }).then((r) => r.count),
+        );
+        break;
+      }
+      case "JOB_LEASE": {
+        const rows = await p.jobLease.findMany({ orderBy: { jobName: "asc" }, take });
+        preview = await this.runPreview(
+          base,
+          rows,
+          (r) => r.jobName,
+          (r) =>
+            r.expiresAt < now
+              ? { eligible: true, reason: "lease expired" }
+              : { eligible: false, reason: "lease still valid" },
+          (ids) => p.jobLease.deleteMany({ where: { jobName: { in: ids } } }).then((r) => r.count),
+        );
+        break;
+      }
+      default:
+        throw new Error(
+          `Category ${categoryKey} is retained and not subject to cleanup preview`,
+        );
+    }
+
+    logger.info(
+      {
+        category: preview.category,
+        table: preview.table,
+        mode: preview.mode,
+        ...preview.counts,
+        applied: preview.applied,
+        actor: opts?.actor,
+      },
+      "data retention cleanup preview completed",
+    );
+
+    return preview;
+  }
+
+  /**
+   * Shared preview engine: classify each candidate row, overlay explicit holds,
+   * and — only in apply mode — delete the eligible set. Never deletes a held,
+   * skipped, or failed record.
+   */
+  private async runPreview<Row>(
+    base: { category: string; table: string; mode: "preview" | "apply"; holds?: RetentionHoldProvider },
+    rows: Row[],
+    pk: (row: Row) => string,
+    classify: (row: Row) => { eligible: boolean; reason: string },
+    deleteEligible: (ids: string[]) => Promise<number>,
+  ): Promise<CleanupPreview> {
+    const records: CleanupPreviewRecord[] = [];
+    const eligibleIds: string[] = [];
+    const errors: string[] = [];
+
+    for (const row of rows) {
+      let id: string;
+      try {
+        id = pk(row);
+      } catch (err) {
+        errors.push(`Failed to read primary key: ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+      try {
+        const heldReason = base.holds ? await base.holds.heldReason(base.table, id) : null;
+        if (heldReason) {
+          records.push({ id, outcome: "held", reason: heldReason });
+          continue;
+        }
+        const c = classify(row);
+        if (c.eligible) {
+          records.push({ id, outcome: "eligible", reason: c.reason });
+          eligibleIds.push(id);
+        } else {
+          records.push({ id, outcome: "skipped", reason: c.reason });
+        }
+      } catch (err) {
+        // A record we cannot classify is retained, never deleted.
+        records.push({
+          id,
+          outcome: "failed",
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    let applied = 0;
+    if (base.mode === "apply" && eligibleIds.length > 0) {
+      try {
+        applied = await deleteEligible(eligibleIds);
+      } catch (err) {
+        errors.push(`Apply failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    const counts = {
+      eligible: records.filter((r) => r.outcome === "eligible").length,
+      skipped: records.filter((r) => r.outcome === "skipped").length,
+      held: records.filter((r) => r.outcome === "held").length,
+      failed: records.filter((r) => r.outcome === "failed").length,
+    };
+
+    return {
+      timestamp: new Date(),
+      category: base.category,
+      table: base.table,
+      mode: base.mode,
+      counts,
+      records,
+      applied,
+      errors,
+    };
   }
 
   /**
