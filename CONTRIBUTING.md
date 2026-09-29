@@ -46,6 +46,7 @@ vaultquest/
 ├── tests/                      # Cross-cutting test utilities
 └── docs/                       # Architecture, state model, testing notes
     ├── ARCHITECTURE.md        # Cross-stack architecture diagram
+    ├── INCIDENT_RUNBOOK.md    # Incident triage and emergency rollback
     └── data-fetching.md       # Client-side data fetching and hooks conventions
 ```
 
@@ -94,7 +95,7 @@ break anything else. Run the relevant commands for your area:
 | Contracts | `cargo fmt --check && cargo clippy -- -D warnings` | Format + lint |
 | Security | `pnpm audit` | Dependency vulnerabilities |
 | Security | `trufflehog filesystem .` | Secret scanning |
-| Docs | manual preview | Markdown renders correctly on GitHub |
+| Docs | `pnpm docs:validate` | Local documentation validation |
 
 ### Auto-fixing lint errors locally
 
