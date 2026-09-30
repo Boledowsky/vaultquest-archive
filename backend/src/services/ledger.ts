@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { PrismaClient } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { ERROR_CODES, FINALITY_POLICY } from "../constants.js";
 import { AppError } from "../errors.js";
 import { withTelemetry } from "./telemetry.js";
@@ -72,6 +73,32 @@ export type RecoveryLeaseResult = {
   recovered: number;
   expired: number;
 };
+
+/**
+ * #504-adjacent concurrency hardening: a bounded retry helper for
+ * serialization/deadlock conflicts. Postgres `Serializable` transactions
+ * (used by `getDashboardSummary` and the mutation paths below) can abort
+ * with SQLSTATE 40001 (serialization_failure) or 40P01 (deadlock_detected)
+ * when two transactions race. Prisma surfaces these as
+ * `PrismaClientKnownRequestError` with code `P2034`. Retrying with jittered
+ * backoff is the documented strategy for these — without it, concurrent
+ * submissions would surface as spurious 500s instead of converging to the
+ * correct domain invariant (one record, no duplicates).
+ */
+const RETRYABLE_PRISMA_CODES = new Set(["P2034"]);
+const MAX_TX_RETRIES = 5;
+
+function isRetryableTxError(err: unknown): boolean {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    return RETRYABLE_PRISMA_CODES.has(err.code);
+  }
+  return false;
+}
+
+function backoffMs(attempt: number): number {
+  const base = Math.min(50 * 2 ** attempt, 500);
+  return base + Math.floor(Math.random() * 25);
+}
 
 export interface ReconcileEventInput {
   txHash: string;
@@ -148,6 +175,33 @@ export class LedgerService {
     this.onActionConfirmedCallback = callback;
   }
 
+  /**
+   * Runs `fn` inside a `Serializable` transaction, retrying on
+   * serialization failures/deadlocks. This is the single choke point every
+   * mutation path below routes through, so the retry policy is uniform and
+   * auditable. Callers must pass a *pure* function of the transaction client
+   * (no external side effects outside `tx`) so a retry is safe.
+   */
+  private async runSerializable<T>(
+    fn: (tx: Prisma.TransactionClient) => Promise<T>
+  ): Promise<T> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < MAX_TX_RETRIES; attempt++) {
+      try {
+        return await this.prisma.$transaction(fn, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable
+        });
+      } catch (err) {
+        if (!isRetryableTxError(err) || attempt === MAX_TX_RETRIES - 1) {
+          throw err;
+        }
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+      }
+    }
+    throw lastErr;
+  }
+
   createAction(input: IntentInput & { observedLedger?: number; confirmationDepth?: number }): Promise<ActionRecord> {
     return withTelemetry({ operation: "action.create", actorType: "user" }, () =>
       this.createActionImpl(input)
@@ -155,41 +209,75 @@ export class LedgerService {
   }
 
   private async createActionImpl(input: IntentInput & { observedLedger?: number; confirmationDepth?: number }): Promise<ActionRecord> {
-    const existing = await this.prisma.actionLedger.findUnique({
-      where: { idempotencyKey: input.idempotencyKey }
-    });
+    // Concurrency: the previous read-then-create was a TOCTOU race — two
+    // concurrent submissions with the same idempotency key could both miss
+    // the `findUnique` and both attempt `create`, with the loser surfacing a
+    // raw P2002 unique-violation instead of the idempotent replay the API
+    // contract promises. We now run the whole check-and-create inside one
+    // Serializable transaction and, on P2002, re-read and return the winner
+    // (or conflict if the payload differs). The DB unique constraint on
+    // `idempotencyKey` is the source of truth; the transaction just makes
+    // the happy path race-free and the loser path deterministic.
+    return this.runSerializable(async (tx) => {
+      const existing = await tx.actionLedger.findUnique({
+        where: { idempotencyKey: input.idempotencyKey }
+      });
 
-    if (existing) {
-      const samePayload =
-        stableStringify(existing.actionPayload) === stableStringify(input.actionPayload) &&
-        existing.walletAddress === input.walletAddress &&
-        existing.actionType === input.actionType;
-      if (!samePayload) {
-        throw AppError.conflict(
-          ERROR_CODES.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD,
-          "idempotency key reused with a different payload"
-        );
+      if (existing) {
+        const samePayload =
+          stableStringify(existing.actionPayload) === stableStringify(input.actionPayload) &&
+          existing.walletAddress === input.walletAddress &&
+          existing.actionType === input.actionType;
+        if (!samePayload) {
+          throw AppError.conflict(
+            ERROR_CODES.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD,
+            "idempotency key reused with a different payload"
+          );
+        }
+        return existing as unknown as ActionRecord;
       }
-      return existing as unknown as ActionRecord;
-    }
 
-    const confirmationDepth = input.confirmationDepth ?? FINALITY_POLICY.defaultConfirmationDepth;
-    const observedLedger = input.observedLedger ?? 0;
-    const finalizedLedger = observedLedger > 0 ? observedLedger + confirmationDepth : null;
+      const confirmationDepth = input.confirmationDepth ?? FINALITY_POLICY.defaultConfirmationDepth;
+      const observedLedger = input.observedLedger ?? 0;
+      const finalizedLedger = observedLedger > 0 ? observedLedger + confirmationDepth : null;
 
-    const created = await this.prisma.actionLedger.create({
-      data: {
-        idempotencyKey: input.idempotencyKey,
-        walletAddress: input.walletAddress,
-        actionType: input.actionType,
-        actionPayload: input.actionPayload as object,
-        observedLedger,
-        finalizedLedger,
-        confirmationDepth,
-        finalityStatus: observedLedger > 0 ? "provisional" : "finalized"
+      try {
+        const created = await tx.actionLedger.create({
+          data: {
+            idempotencyKey: input.idempotencyKey,
+            walletAddress: input.walletAddress,
+            actionType: input.actionType,
+            actionPayload: input.actionPayload as object,
+            observedLedger,
+            finalizedLedger,
+            confirmationDepth,
+            finalityStatus: observedLedger > 0 ? "provisional" : "finalized"
+          }
+        });
+        return created as unknown as ActionRecord;
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+          // Lost the race: another transaction committed the same key.
+          // Re-read and apply the same idempotency contract.
+          const winner = await tx.actionLedger.findUnique({
+            where: { idempotencyKey: input.idempotencyKey }
+          });
+          if (!winner) throw err;
+          const samePayload =
+            stableStringify(winner.actionPayload) === stableStringify(input.actionPayload) &&
+            winner.walletAddress === input.walletAddress &&
+            winner.actionType === input.actionType;
+          if (!samePayload) {
+            throw AppError.conflict(
+              ERROR_CODES.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD,
+              "idempotency key reused with a different payload"
+            );
+          }
+          return winner as unknown as ActionRecord;
+        }
+        throw err;
       }
     });
-    return created as unknown as ActionRecord;
   }
 
   async attachTxHash(id: string, txHash: string, observedLedger?: number): Promise<ActionRecord> {
