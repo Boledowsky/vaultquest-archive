@@ -453,6 +453,7 @@ export class LedgerService {
 
     const where = {
       walletAddress,
+      redactedAt: null,
       ...(status !== undefined && { status }),
       ...(type !== undefined && { actionType: type as ActionStatus })
     };
