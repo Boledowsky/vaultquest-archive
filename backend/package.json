@@ -13,6 +13,7 @@
     "db:backup": "tsx src/scripts/backup.ts",
     "indexer:backfill": "tsx src/scripts/backfill.ts",
     "dr:drill": "tsx src/scripts/drDrill.ts",
+    "db:validate-restore": "tsx src/scripts/validateRestore.ts",
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
     "test": "vitest run",
     "test:watch": "vitest",
