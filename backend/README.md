@@ -60,3 +60,14 @@ Tests use Testcontainers to spin up Postgres 16 per run. Docker must be availabl
 ```bash
 pnpm test
 ```
+# Dependency health diagnostics
+
+`GET /health/dependencies` checks PostgreSQL, Redis cache, and each configured
+Soroban RPC endpoint. It reports healthy/degraded/unavailable overall status
+and a per-dependency remediation hint. Redis is optional and its absence is
+degraded, not a hard outage. Missing or malformed RPC configuration is
+reported as misconfigured. RPC requests have a short timeout and endpoint
+URLs, credentials, and provider error bodies are never included in the report.
+HTTP 503 means a required dependency (database or RPC) is unavailable or
+misconfigured; optional degradation remains HTTP 200. The endpoint is local
+diagnostics and exposes no secrets.

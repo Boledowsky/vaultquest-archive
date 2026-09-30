@@ -82,6 +82,7 @@ const app = buildApp({
   apiKey: env.API_KEY,
   logger,
   cacheService,
+  sorobanRpcUrls: env.SOROBAN_RPC_URL,
   categoriesCacheTtlSeconds: env.CATEGORIES_CACHE_TTL_SECONDS,
   reminderLeadHours: env.REMINDER_LEAD_HOURS,
   jobStore: env.WORKER_ENABLED ? new PrismaJobStore(prisma) : undefined,

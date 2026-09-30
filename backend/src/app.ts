@@ -67,6 +67,8 @@ export type AppDeps = {
    */
   jobStore?: JobStore;
   jobWorkerPollIntervalMs?: number;
+  /** Comma-separated Soroban RPC endpoints used by dependency diagnostics. */
+  sorobanRpcUrls?: string;
 };
 
 declare module "fastify" {
@@ -233,7 +235,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Register routes (healthRoutes already includes /health endpoint)
   app.register(actionsRoutes(svc, apiKeyGuard));
   app.register(walletAuthRoutes(walletAuthSvc));
-  app.register(healthRoutes(svc));
+  app.register(healthRoutes(svc, {
+    prisma: deps.prisma,
+    cacheService: deps.cacheService,
+    rpcUrls: deps.sorobanRpcUrls,
+  }));
   app.register(savedPoolsRoutes(savedPoolsSvc));
   app.register(schemaVersionRoutes(schemaVersionSvc));
   app.register(
