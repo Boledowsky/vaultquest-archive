@@ -1,3 +1,4 @@
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -471,4 +472,47 @@ model OutboundAction {
 
   @@index([status, updatedAt])
   @@map("outbound_actions")
+}
+
+// #VaultQuest — event-driven notification deduplication and delivery
+// tracking. `idempotencyKey` is deterministic over the source event so a
+// retried or replayed event can never enqueue a second notification; the
+// unique constraint is the actual duplicate guard. `attempts`/`maxAttempts`
+// bound retries and `lastError` records the last failure for diagnostics.
+model Notification {
+  id             String    @id @default(uuid()) @db.Uuid
+  idempotencyKey String    @unique @map("idempotency_key")
+  eventType      String    @map("event_type")
+  recipient      String
+  channel        String    @default("in_app")
+  payload        Json
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(3) @map("max_attempts")
+  lastError      String?   @map("last_error")
+  correlationId  String?   @map("correlation_id")
+  deliveredAt    DateTime? @map("delivered_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, updatedAt])
+  @@index([recipient, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+// Append-only diagnostics for every notification delivery attempt, so a
+// failed delivery can be diagnosed without log archaeology and retries are
+// auditable per attempt.
+model NotificationDeliveryAttempt {
+  id             String    @id @default(uuid()) @db.Uuid
+  notificationId String    @map("notification_id") @db.Uuid
+  attempt        Int
+  status         String
+  errorCode      String?   @map("error_code")
+  errorDetail    String?   @map("error_detail")
+  attemptedAt    DateTime  @default(now()) @map("attempted_at")
+
+  @@unique([notificationId, attempt])
+  @@index([notificationId, attemptedAt])
+  @@map("notification_delivery_attempts")
 }
