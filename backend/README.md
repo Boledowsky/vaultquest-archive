@@ -154,9 +154,15 @@ Tests use Testcontainers to spin up Postgres 16 per run. Docker must be availabl
 ```bash
 pnpm test
 ```
+# Privacy-preserving maintainer analytics
 
-The diagnostics command is covered by `tests/doctor.spec.ts`, which exercises each check against known-good and known-bad fixtures:
-
-```bash
-pnpm test -- tests/doctor.spec.ts
-```
+The authenticated internal endpoint `/internal/analytics/summary` returns a
+30-day aggregate of action type/status, settlement state, reward status,
+background-job status, and distinct participant count. The lookback is bounded to 1–90 days at the
+service boundary. It is computed on demand in a repeatable-read, read-only
+transaction; no analytics events or identifiers are persisted. Raw wallet
+addresses, transaction hashes, emails, and payloads are never selected into
+the response. Distinct-participant counts below five are suppressed. The
+window is the retention policy: only source records created in that interval
+contribute to the response. Access requires the internal service secret and
+the dedicated internal analytics-read permission.
