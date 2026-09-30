@@ -47,6 +47,7 @@ import { exportsRoutes } from "./routes/exports.js";
 import { importsRoutes } from "./routes/imports.js";
 import { OperationalHealthService } from "./services/operationalHealthService.js";
 import { operationalHealthRoutes } from "./routes/operationalHealth.js";
+import { privacyAnalyticsRoutes } from "./routes/privacyAnalytics.js";
 
 export type AppDeps = {
   prisma: PrismaClient;
@@ -247,6 +248,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.register(
     operationalHealthRoutes(operationalHealthSvc, deps.internalSecret),
   );
+  app.register(privacyAnalyticsRoutes(deps.prisma, deps.internalSecret));
   if (jobQueue) app.register(jobsRoutes(jobQueue, deps.internalSecret));
   app.register(usersRoutes, { prefix: "/api/users", prisma: deps.prisma });
   app.register(metricsRoutes(metricsSvc, apiKeyGuard));

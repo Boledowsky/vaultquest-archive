@@ -108,6 +108,8 @@ describe("role/permission matrix (lib/rbac)", () => {
     expect(roleHasPermission("maintainer", "internal.reconcile")).toBe(false);
     expect(roleHasPermission("service", "admin.audit.read")).toBe(false);
     expect(roleHasPermission("service", "own.data.export")).toBe(false);
+    expect(roleHasPermission("service", "internal.analytics.read")).toBe(true);
+    expect(roleHasPermission("user", "internal.analytics.read")).toBe(false);
   });
 
   it("grants every permission to at least one role", () => {
