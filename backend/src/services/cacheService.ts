@@ -12,6 +12,23 @@ import { Redis as RedisClient } from "ioredis";
 import type { PrismaClient } from "@prisma/client";
 import type { Logger } from "pino";
 
+export interface StaleCacheEntry {
+  key: string;
+  kind: "pending_event" | "asset_metadata" | "protocol_config" | "generic" | "checkpoint";
+  reason: "missing" | "stale" | "drift";
+  cachedAt?: Date;
+  sourceUpdatedAt?: Date;
+  detail?: string;
+}
+
+export interface RepairResult {
+  dryRun: boolean;
+  scanned: number;
+  stale: StaleCacheEntry[];
+  repaired: string[];
+  failed: Array<{ key: string; error: string }>;
+}
+
 export interface IndexerCheckpoint {
   id?: string;
   latestLedger: number;
@@ -19,6 +36,7 @@ export interface IndexerCheckpoint {
   lastSyncTime: Date;
   lastSuccessSyncTime?: Date;
   lastError?: string | null;
+  version?: number;
 }
 
 export interface PendingEvent {
@@ -30,18 +48,21 @@ export interface PendingEvent {
   ledgerClosedAt?: Date | string | null;
   receivedAt: Date;
   consumedAt?: Date | null;
+  version?: number;
 }
 
 export interface AssetMetadata {
   asset: string;
   decimals: number;
   lastUpdated: Date;
+  version?: number;
 }
 
 export interface ProtocolConfigRecord {
   key: string;
   value: unknown;
   updatedAt: Date;
+  version?: number;
 }
 
 type CacheEntry<T> = { value: T; accessedAt: Date };
@@ -49,6 +70,9 @@ type CacheEntry<T> = { value: T; accessedAt: Date };
 const CHECKPOINT_KEY = "indexer:checkpoint";
 const CHECKPOINT_DIRTY_KEY = "indexer:checkpoint:dirty";
 const PENDING_EVENT_TTL_SECONDS = 3600;
+const STALE_AGE_MS = 5 * 60 * 1000;
+const STALE_SCAN_PATTERN = "vaultquest:cache:*";
+const STALE_INDEX_KEY = "vaultquest:cache:index";
 
 function pendingEventKey(txHash: string): string {
   return `pending_event:${txHash}`;
@@ -61,6 +85,7 @@ function pendingEventKey(txHash: string): string {
 export class CacheService {
   private readonly redis: RedisClient | null;
   private isOnline = false;
+  private readonly versionMap = new Map<string, number>();
 
   private readonly pendingMap = new Map<string, CacheEntry<PendingEvent>>();
   private readonly assetMap = new Map<string, CacheEntry<AssetMetadata>>();
@@ -133,6 +158,7 @@ export class CacheService {
     if (this.redis && this.isOnline) {
       try {
         await this.redis.set(key, JSON.stringify(value), "EX", ttlSeconds);
+        await this.redis.sadd(STALE_INDEX_KEY, key);
       } catch (err: any) {
         this.logger.warn({ err, key }, "Redis set failed — response served uncached");
       }
@@ -149,6 +175,7 @@ export class CacheService {
     if (this.redis && this.isOnline) {
       try {
         await this.redis.del(key);
+        await this.redis.srem(STALE_INDEX_KEY, key);
       } catch (err: any) {
         this.logger.warn({ err, key }, "Redis invalidate failed");
       }
@@ -169,7 +196,8 @@ export class CacheService {
             lastProcessedEventId: parsed.lastProcessedEventId ?? null,
             lastSyncTime: new Date(parsed.lastSyncTime),
             lastSuccessSyncTime: new Date(parsed.lastSuccessSyncTime),
-            lastError: parsed.lastError
+            lastError: parsed.lastError,
+            version: parsed.version
           };
         }
       } catch (err) {
@@ -186,6 +214,7 @@ export class CacheService {
     lastSyncTime: Date;
     lastSuccessSyncTime: Date;
     lastError: string | null;
+    version?: number;
   }): Promise<void> {
     if (this.redis && this.isOnline) {
       try {
@@ -196,7 +225,8 @@ export class CacheService {
             lastProcessedEventId: checkpoint.lastProcessedEventId,
             lastSyncTime: checkpoint.lastSyncTime.toISOString(),
             lastSuccessSyncTime: checkpoint.lastSuccessSyncTime.toISOString(),
-            lastError: checkpoint.lastError
+            lastError: checkpoint.lastError,
+            version: checkpoint.version ?? Date.now()
           })
         );
         await this.redis.set(CHECKPOINT_DIRTY_KEY, "true");
@@ -215,14 +245,16 @@ export class CacheService {
         lastProcessedEventId: checkpoint.lastProcessedEventId,
         lastSyncTime: checkpoint.lastSyncTime,
         lastError: checkpoint.lastError,
-        lastSuccessSyncTime: checkpoint.lastSuccessSyncTime
+        lastSuccessSyncTime: checkpoint.lastSuccessSyncTime,
+        version: checkpoint.version ?? Date.now()
       },
       update: {
         latestLedger: checkpoint.latestLedger,
         lastProcessedEventId: checkpoint.lastProcessedEventId,
         lastSyncTime: checkpoint.lastSyncTime,
         lastError: checkpoint.lastError,
-        lastSuccessSyncTime: checkpoint.lastSuccessSyncTime
+        lastSuccessSyncTime: checkpoint.lastSuccessSyncTime,
+        version: checkpoint.version ?? Date.now()
       }
     });
   }
@@ -249,14 +281,16 @@ export class CacheService {
           lastProcessedEventId: parsed.lastProcessedEventId ?? null,
           lastSyncTime: new Date(parsed.lastSyncTime),
           lastError: parsed.lastError,
-          lastSuccessSyncTime: new Date(parsed.lastSuccessSyncTime)
+          lastSuccessSyncTime: new Date(parsed.lastSuccessSyncTime),
+          version: parsed.version ?? Date.now()
         },
         update: {
           latestLedger: parsed.latestLedger,
           lastProcessedEventId: parsed.lastProcessedEventId ?? null,
           lastSyncTime: new Date(parsed.lastSyncTime),
           lastError: parsed.lastError,
-          lastSuccessSyncTime: new Date(parsed.lastSuccessSyncTime)
+          lastSuccessSyncTime: new Date(parsed.lastSuccessSyncTime),
+          version: parsed.version ?? Date.now()
         }
       });
       await this.redis.del(CHECKPOINT_DIRTY_KEY);
@@ -300,7 +334,8 @@ export class CacheService {
       statusHint: row.statusHint as PendingEvent["statusHint"],
       ledgerClosedAt: row.ledgerClosedAt,
       receivedAt: row.receivedAt,
-      consumedAt: row.consumedAt
+      consumedAt: row.consumedAt,
+      version: (row as any).version
     };
   }
 
@@ -322,13 +357,15 @@ export class CacheService {
         statusHint: event.statusHint,
         ledgerClosedAt: event.ledgerClosedAt ? new Date(event.ledgerClosedAt) : null,
         receivedAt: event.receivedAt,
-        consumedAt: event.consumedAt ?? null
+        consumedAt: event.consumedAt ?? null,
+        version: event.version ?? Date.now()
       },
       update: {
         sorobanEventId: event.sorobanEventId,
         eventPayload: event.eventPayload as any,
         statusHint: event.statusHint,
-        consumedAt: event.consumedAt ?? null
+        consumedAt: event.consumedAt ?? null,
+        version: event.version ?? Date.now()
       }
     });
 
@@ -353,6 +390,7 @@ export class CacheService {
           "EX",
           PENDING_EVENT_TTL_SECONDS
         );
+        await this.redis.sadd(STALE_INDEX_KEY, pendingEventKey(event.txHash));
       } catch (err) {
         this.logger.warn({ err, txHash: event.txHash }, "Redis cache of pending event failed");
       }
@@ -370,6 +408,7 @@ export class CacheService {
     if (this.redis && this.isOnline) {
       try {
         await this.redis.del(pendingEventKey(txHash));
+        await this.redis.srem(STALE_INDEX_KEY, pendingEventKey(txHash));
       } catch (err) {
         this.logger.warn({ err, txHash }, "Redis deletePendingEvent failed");
       }
@@ -431,6 +470,7 @@ export class CacheService {
    */
   async invalidateProtocolConfig(key: string): Promise<void> {
     this.configMap.delete(key);
+    this.versionMap.delete(`config:${key}`);
   }
 
   /**
@@ -440,6 +480,7 @@ export class CacheService {
     this.pendingMap.clear();
     this.assetMap.clear();
     this.configMap.clear();
+    this.versionMap.clear();
   }
 
   /**
@@ -471,5 +512,156 @@ export class CacheService {
       }
     }
     if (oldestKey !== undefined) map.delete(oldestKey);
+  }
+
+  // --- stale detection & repair -------------------------------------------
+
+  /**
+   * Records the source-of-truth version/timestamp for a cache key so that
+   * later scans can detect drift between the cached value and its source.
+   *
+   * @param key - Cache key
+   * @param version - Monotonic version or epoch ms of the source record
+   */
+  async markSourceVersion(key: string, version: number): Promise<void> {
+    this.versionMap.set(key, version);
+    if (this.redis && this.isOnline) {
+      try {
+        await this.redis.hset("vaultquest:cache:versions", key, String(version));
+      } catch (err) {
+        this.logger.warn({ err, key }, "Failed to persist source version");
+      }
+    }
+  }
+
+  /**
+   * Detects stale cache entries by comparing cached versions/timestamps
+   * against the recorded source version. An entry is stale when:
+   *  - its source version is newer than the cached version, or
+   *  - it has exceeded `STALE_AGE_MS` without a version bump.
+   *
+   * @param now - Reference time (injectable for tests)
+   * @returns List of stale entries (empty when everything is fresh)
+   */
+  async detectStale(now: Date = new Date()): Promise<StaleCacheEntry[]> {
+    const stale: StaleCacheEntry[] = [];
+
+    // In-memory maps: compare accessedAt against source version map.
+    for (const [key, entry] of this.pendingMap.entries()) {
+      const sourceVersion = this.versionMap.get(pendingEventKey(key));
+      const cachedVersion = (entry.value as PendingEvent).version;
+      if (sourceVersion !== undefined && cachedVersion !== undefined && sourceVersion > cachedVersion) {
+        stale.push({ key: pendingEventKey(key), kind: "pending_event", reason: "drift", cachedAt: entry.accessedAt });
+      } else if (now.getTime() - entry.accessedAt.getTime() > STALE_AGE_MS) {
+        stale.push({ key: pendingEventKey(key), kind: "pending_event", reason: "stale", cachedAt: entry.accessedAt });
+      }
+    }
+
+    for (const [asset, entry] of this.assetMap.entries()) {
+      const sourceVersion = this.versionMap.get(`asset:${asset}`);
+      const cachedVersion = entry.value.version;
+      if (sourceVersion !== undefined && cachedVersion !== undefined && sourceVersion > cachedVersion) {
+        stale.push({ key: `asset:${asset}`, kind: "asset_metadata", reason: "drift", cachedAt: entry.accessedAt });
+      } else if (now.getTime() - entry.value.lastUpdated.getTime() > STALE_AGE_MS) {
+        stale.push({ key: `asset:${asset}`, kind: "asset_metadata", reason: "stale", cachedAt: entry.value.lastUpdated });
+      }
+    }
+
+    for (const [key, entry] of this.configMap.entries()) {
+      const sourceVersion = this.versionMap.get(`config:${key}`);
+      const cachedVersion = entry.value.version;
+      if (sourceVersion !== undefined && cachedVersion !== undefined && sourceVersion > cachedVersion) {
+        stale.push({ key: `config:${key}`, kind: "protocol_config", reason: "drift", cachedAt: entry.accessedAt });
+      } else if (now.getTime() - entry.value.updatedAt.getTime() > STALE_AGE_MS) {
+        stale.push({ key: `config:${key}`, kind: "protocol_config", reason: "stale", cachedAt: entry.value.updatedAt });
+      }
+    }
+
+    // Redis: scan the tracked index for entries whose source version drifted.
+    if (this.redis && this.isOnline) {
+      try {
+        const tracked = await this.redis.smembers(STALE_INDEX_KEY);
+        for (const key of tracked) {
+          const raw = await this.redis.get(key);
+          if (raw === null) {
+            stale.push({ key, kind: "generic", reason: "missing" });
+            continue;
+          }
+          const sourceVersion = this.versionMap.get(key);
+          if (sourceVersion === undefined) continue;
+          let parsed: any;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            stale.push({ key, kind: "generic", reason: "drift", detail: "unparseable cache payload" });
+            continue;
+          }
+          const cachedVersion = parsed?.version;
+          if (cachedVersion !== undefined && sourceVersion > cachedVersion) {
+            stale.push({ key, kind: "generic", reason: "drift", cachedAt: parsed?.cachedAt ? new Date(parsed.cachedAt) : undefined });
+          }
+        }
+      } catch (err) {
+        this.logger.warn({ err }, "Redis stale scan failed");
+      }
+    }
+
+    return stale;
+  }
+
+  /**
+   * Idempotent repair job. Detects stale entries and (unless `dryRun`) evicts
+   * them so the next read repopulates from the source of truth. Running the
+   * job repeatedly with no source changes is a no-op.
+   *
+   * @param options.dryRun - When true, only report what would be repaired
+   * @param options.now - Reference time (injectable for tests)
+   * @returns Repair summary
+   */
+  async repairStaleCache(options: { dryRun?: boolean; now?: Date } = {}): Promise<RepairResult> {
+    const dryRun = options.dryRun ?? true;
+    const stale = await this.detectStale(options.now ?? new Date());
+    const result: RepairResult = { dryRun, scanned: stale.length, stale, repaired: [], failed: [] };
+
+    if (dryRun) {
+      this.logger.info({ stale: stale.length }, "Stale cache repair dry-run");
+      return result;
+    }
+
+    for (const entry of stale) {
+      try {
+        await this.repairEntry(entry);
+        result.repaired.push(entry.key);
+      } catch (err: any) {
+        result.failed.push({ key: entry.key, error: err?.message ?? String(err) });
+        this.logger.warn({ err, key: entry.key }, "Failed to repair stale cache entry");
+      }
+    }
+
+    this.logger.info({ repaired: result.repaired.length, failed: result.failed.length }, "Stale cache repair complete");
+    return result;
+  }
+
+  private async repairEntry(entry: StaleCacheEntry): Promise<void> {
+    switch (entry.kind) {
+      case "pending_event": {
+        const txHash = entry.key.replace(/^pending_event:/, "");
+        await this.deletePendingEvent(txHash);
+        return;
+      }
+      case "asset_metadata": {
+        const asset = entry.key.replace(/^asset:/, "");
+        this.assetMap.delete(asset);
+        return;
+      }
+      case "protocol_config": {
+        const key = entry.key.replace(/^config:/, "");
+        this.configMap.delete(key);
+        return;
+      }
+      default: {
+        await this.invalidate(entry.key);
+      }
+    }
   }
 }
