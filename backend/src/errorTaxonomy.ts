@@ -453,6 +453,56 @@ export const ERROR_CATALOG: Record<ErrorCode, ErrorDescriptor> = {
     userMessage: "The pool indexer service is temporarily unavailable.",
     recovery: "Retry the operation in a few moments. If it keeps failing, contact support.",
     exposeMessage: false
+  },
+  // #799 — Webhook verification and replay window descriptors
+  [ERROR_CODES.WEBHOOK_SIGNATURE_INVALID]: {
+    category: "authorization",
+    retryable: false,
+    userMessage: "The webhook signature is invalid or could not be verified.",
+    recovery: "Verify the webhook signing secret and signature generation algorithm.",
+    exposeMessage: true
+  },
+  [ERROR_CODES.WEBHOOK_SIGNATURE_MISSING]: {
+    category: "authorization",
+    retryable: false,
+    userMessage: "The webhook signature header is missing.",
+    recovery: "Include the required signature header in your webhook request.",
+    exposeMessage: true
+  },
+  [ERROR_CODES.WEBHOOK_TIMESTAMP_STALE]: {
+    category: "validation",
+    retryable: false,
+    userMessage: "The webhook event timestamp is outside the allowed replay window.",
+    recovery: "Ensure webhook events are sent within the allowed time window and system clocks are synchronized.",
+    exposeMessage: true
+  },
+  [ERROR_CODES.WEBHOOK_TIMESTAMP_MISSING]: {
+    category: "validation",
+    retryable: false,
+    userMessage: "The webhook timestamp header or field is missing.",
+    recovery: "Include a valid timestamp header or payload timestamp.",
+    exposeMessage: true
+  },
+  [ERROR_CODES.WEBHOOK_DUPLICATE_EVENT]: {
+    category: "conflict",
+    retryable: false,
+    userMessage: "This webhook event has already been processed.",
+    recovery: "Duplicate delivery acknowledged; no repeated side effects will be performed.",
+    exposeMessage: true
+  },
+  [ERROR_CODES.WEBHOOK_EVENT_MALFORMED]: {
+    category: "validation",
+    retryable: false,
+    userMessage: "The webhook payload is malformed or does not match the expected schema.",
+    recovery: "Verify the webhook payload matches the required event schema.",
+    exposeMessage: true
+  },
+  [ERROR_CODES.WEBHOOK_PROVIDER_UNSUPPORTED]: {
+    category: "validation",
+    retryable: false,
+    userMessage: "The requested webhook provider is not supported.",
+    recovery: "Use a supported webhook provider (e.g. stripe, internal, stellar, custom).",
+    exposeMessage: true
   }
 };
 

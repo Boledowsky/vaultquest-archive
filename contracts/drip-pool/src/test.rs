@@ -2237,7 +2237,8 @@ fn open_round_fails_with_unavailable_randomness_config_after_admin_removed() {
     client.execute_proposal(&admin, &set_threshold_pid);
     assert_eq!(client.threshold(), 1);
 
-    let remove_admin_pid = client.propose(&admin, &ProposalAction::RemoveAdmin(second_admin.clone()));
+    let remove_admin_pid =
+        client.propose(&admin, &ProposalAction::RemoveAdmin(second_admin.clone()));
     // threshold_snapshot for this proposal is 1 (taken at propose time,
     // after SetThreshold already executed), so admin's own auto-approval
     // already meets it - no second approve() call needed, only the delay.
@@ -4164,7 +4165,7 @@ fn test_ticket_weighting_rejects_out_of_order_candidates() {
 
     let round_id = client.open_round(&admin);
     client.round_deposit(&alice, &round_id, &100); // seq 0
-    client.round_deposit(&bob, &round_id, &200);   // seq 1
+    client.round_deposit(&bob, &round_id, &200); // seq 1
 
     let seed = BytesN::from_array(&env, &[5u8; 32]);
     let commitment: BytesN<32> = env.crypto().sha256(&seed.to_bytes()).to_bytes();

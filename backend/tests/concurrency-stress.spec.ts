@@ -138,11 +138,11 @@ describe("CON invitation acceptance is exactly-once under concurrency", () => {
       inviterId: "G_OWNER",
       inviteeId: "G_INVITEE",
       inviterRole: "admin",
-      expiresInMs: 1,000,
+      expiresInMs: 1000,
     });
 
     // Advance past the expiry window before any accept attempt.
-    clock.advance(5,000);
+    clock.advance(5000);
 
     const results = await runConcurrently(4, () =>
       timed.accept({ token, inviteeId: "G_INVITEE" })

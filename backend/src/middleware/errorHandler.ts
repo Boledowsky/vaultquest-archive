@@ -76,7 +76,11 @@ export function errorHandler(
     const maybeStatus = err.statusCode || (err as any).status;
     if (typeof maybeStatus === "number" && maybeStatus >= 400 && maybeStatus < 600) {
       statusCode = maybeStatus;
-      code = err.code || ERROR_CODES.HTTP_ERROR;
+      if (req.url?.startsWith("/webhooks") && statusCode === 400) {
+        code = ERROR_CODES.WEBHOOK_EVENT_MALFORMED;
+      } else {
+        code = err.code || ERROR_CODES.HTTP_ERROR;
+      }
       message = err.message;
     }
   }

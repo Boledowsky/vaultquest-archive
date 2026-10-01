@@ -5,11 +5,11 @@
  * - Proper <label> association
  * - Error message linked via aria-describedby
  * - Help text support
- * - Required field indication
  * - Focus management
  */
+import React, { forwardRef } from "react";
 
-export function AccessibleField({
+export const AccessibleField = forwardRef(function AccessibleField({
   label,
   id,
   error,
@@ -19,7 +19,7 @@ export function AccessibleField({
   type = "text",
   className = "",
   ...inputProps
-}) {
+}, ref) {
   const describedBy = [
     error ? `${id}-error` : null,
     helpText && !error ? `${id}-help` : null,
@@ -39,6 +39,7 @@ export function AccessibleField({
       </label>
 
       <input
+        ref={ref}
         id={id}
         type={type}
         disabled={disabled}
@@ -71,7 +72,7 @@ export function AccessibleField({
       )}
     </div>
   );
-}
+});
 
 /**
  * AccessibleButton: Semantic button with visible focus state

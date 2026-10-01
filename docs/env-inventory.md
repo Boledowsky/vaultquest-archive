@@ -89,4 +89,9 @@ These are consumed by `backend/src/env.ts`.
 | `ORPHAN_TTL_MINUTES` | Minutes after which `submitted` rows with no event are orphaned | Default 10 |
 | `LOG_LEVEL` | Pino log level | Default `info` |
 | `PORT` | HTTP port | Default 3001 |
+| `WEBHOOK_SECRET` | Secret for internal/custom HMAC-SHA256 signature verification (#799) | Optional (defaults to `INTERNAL_SERVICE_SECRET`) |
+| `STRIPE_WEBHOOK_SECRET` | Secret for Stripe webhook signature verification (`whsec_...`) | Optional (required if using Stripe webhooks) |
+| `STELLAR_WEBHOOK_PUBLIC_KEY` | Stellar Ed25519 public key (`G...`) for verifying oracle callbacks | Optional (required if using Stellar oracle webhooks) |
+| `WEBHOOK_TOLERANCE_SECONDS` | Maximum allowed timestamp drift in seconds for replay-window enforcement | Default 300 |
+
 

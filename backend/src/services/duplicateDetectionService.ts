@@ -385,8 +385,8 @@ function buildSummary(
  * database or repository layer.
  */
 export async function detectDuplicatesAsync(
-  candidate: VaulQuestRecord,
-  listExisting: () => Promise<readonly VaultQuestRecord[]> | readonly VaulQuestRecord[]>,
+  candidate: VaultQuestRecord,
+  listExisting: () => Promise<readonly VaultQuestRecord[]> | readonly VaultQuestRecord[],
   options: DuplicateDetectionOptions = {},
 ): Promise<DuplicateDetectionResult> {
   const existing = await listExisting();
