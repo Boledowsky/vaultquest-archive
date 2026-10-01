@@ -12,7 +12,8 @@ import {
   portfolioQuery,
   exportQuery,
   idempotencyKeySchema,
-  actionHistoryQuery
+  actionHistoryQuery,
+  publicActivityQuery,
 } from "../schemas/actions.js";
 import { AppError } from "../errors.js";
 import { ok, page } from "../responses.js";
@@ -64,6 +65,28 @@ function serialize(row: Awaited<ReturnType<LedgerService["getAction"]>>) {
     submitted_at: row.submittedAt,
     confirmed_at: row.confirmedAt,
     redacted_at: row.redactedAt
+  };
+}
+
+/**
+ * The account-facing history contract deliberately exposes an allow-list.
+ * Internal payloads can contain recipient, signer, retry, correlation, and
+ * error-detail data that is useful to operators but not to account holders.
+ */
+function serializePublicActivity(row: Awaited<ReturnType<LedgerService["getAction"]>>) {
+  if (!row || row.redactedAt) return null;
+  const payload = (row.actionPayload as Record<string, unknown> | null) ?? {};
+  return {
+    id: row.id,
+    date: row.createdAt,
+    action_type: row.actionType,
+    pool_id: String(payload.vault_id ?? payload.pool_id ?? ""),
+    asset: String(payload.token ?? payload.asset ?? ""),
+    amount: String(payload.amount ?? ""),
+    status: row.status,
+    tx_hash: row.txHash,
+    submitted_at: row.submittedAt,
+    confirmed_at: row.confirmedAt,
   };
 }
 
@@ -141,6 +164,7 @@ export const actionsRoutes = (
       const result = await svc.listActions({
         walletAddress: q.wallet,
         status: q.status,
+        type: q.type,
         cursor: q.cursor,
         limit: q.limit
       });
@@ -348,5 +372,21 @@ export const actionsRoutes = (
         limit: q.limit
       });
       return page(result.items.map(serialize), { nextCursor: result.nextCursor, limit: q.limit });
+    });
+
+    /** Account-facing history: only safe, user-visible fields are returned. */
+    app.get<{ Params: { walletAddress: string } }>("/api/actions/:walletAddress/history", { preHandler: apiKeyGuard }, async (req) => {
+      const q = publicActivityQuery.parse(req.query);
+      const result = await svc.listActions({
+        walletAddress: req.params.walletAddress,
+        status: q.status,
+        type: q.type,
+        cursor: q.cursor ?? null,
+        limit: q.limit,
+      });
+      return page(
+        result.items.map(serializePublicActivity).filter((row): row is NonNullable<typeof row> => row !== null),
+        { nextCursor: result.nextCursor, limit: q.limit },
+      );
     });
   };
