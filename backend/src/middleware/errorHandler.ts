@@ -5,6 +5,7 @@ import { ERROR_CODES } from "../constants.js";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { toUserSafeError } from "../errorTaxonomy.js";
+import { OperationLimitError } from "../services/operationLimits.js";
 
 export function errorHandler(
   err: FastifyError,
@@ -22,7 +23,9 @@ export function errorHandler(
   let details: unknown = undefined;
   let issues: unknown = undefined;
 
-  if (err.statusCode === 429) {
+  // AppErrors carry their own 429 code (#815 OPERATION_LIMIT_EXCEEDED), so
+  // only framework/plugin 429s are treated as generic rate limiting.
+  if (err.statusCode === 429 && !(err instanceof AppError)) {
     statusCode = 429;
     code = ERROR_CODES.RATE_LIMIT_EXCEEDED;
     message = err.message;
@@ -36,6 +39,11 @@ export function errorHandler(
     message = err.message;
     details = err.detail;
     issues = err.issues;
+    if (err instanceof OperationLimitError) {
+      // #815: user-safe structured details + standard Retry-After header.
+      details = err.limitDetails;
+      reply.header("Retry-After", String(err.retryAfterSeconds));
+    }
   } else if (err instanceof ZodError) {
     statusCode = 400;
     code = ERROR_CODES.INVALID_PAYLOAD;
@@ -68,7 +76,11 @@ export function errorHandler(
     const maybeStatus = err.statusCode || (err as any).status;
     if (typeof maybeStatus === "number" && maybeStatus >= 400 && maybeStatus < 600) {
       statusCode = maybeStatus;
-      code = err.code || ERROR_CODES.HTTP_ERROR;
+      if (req.url?.startsWith("/webhooks") && statusCode === 400) {
+        code = ERROR_CODES.WEBHOOK_EVENT_MALFORMED;
+      } else {
+        code = err.code || ERROR_CODES.HTTP_ERROR;
+      }
       message = err.message;
     }
   }
