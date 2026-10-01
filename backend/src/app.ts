@@ -133,28 +133,8 @@ export type AppDeps = {
    */
   jobStore?: JobStore;
   jobWorkerPollIntervalMs?: number;
-  /** #812: Stellar secret seed that signs receipts; an ephemeral key is used when unset. */
-  receiptSigningSecret?: string;
-  /** #812: retired receipt public keys still accepted for verification. */
-  receiptPreviousPublicKeys?: string[];
-  /** #813: how long an in-flight action may sit untouched before it is stuck. */
-  pendingStaleThresholdMs?: number;
-  /** #813: automatic retries before a recovery case becomes `failed`. */
-  recoveryMaxAttempts?: number;
-  /** #815: OPERATION_LIMITS JSON override. */
-  operationLimits?: string;
-  /** #814: audit trail storage; defaults to the Prisma table. */
-  auditTrailStore?: AuditTrailStore;
-  /** #791: impersonation session store; defaults to InMemoryImpersonationStore (use Prisma store in prod). */
-  impersonationStore?: import("./services/impersonation.js").ImpersonationStore;
-  /** #799: signed webhook verification and replay window enforcement */
-  webhookService?: WebhookService;
-  webhookEventStore?: WebhookEventStore;
-  webhookSecret?: string;
-  stripeWebhookSecret?: string;
-  stellarWebhookPublicKey?: string;
-  webhookToleranceSeconds?: number;
-  webhookHooks?: WebhookHandlerHooks;
+  /** Comma-separated Soroban RPC endpoints used by dependency diagnostics. */
+  sorobanRpcUrls?: string;
 };
 
 declare module "fastify" {
@@ -391,7 +371,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     }),
   );
   app.register(walletAuthRoutes(walletAuthSvc));
-  app.register(healthRoutes(svc));
+  app.register(healthRoutes(svc, {
+    prisma: deps.prisma,
+    cacheService: deps.cacheService,
+    rpcUrls: deps.sorobanRpcUrls,
+  }));
   app.register(savedPoolsRoutes(savedPoolsSvc));
   app.register(schemaVersionRoutes(schemaVersionSvc));
   app.register(

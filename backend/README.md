@@ -154,15 +154,14 @@ Tests use Testcontainers to spin up Postgres 16 per run. Docker must be availabl
 ```bash
 pnpm test
 ```
-# Privacy-preserving maintainer analytics
+# Dependency health diagnostics
 
-The authenticated internal endpoint `/internal/analytics/summary` returns a
-30-day aggregate of action type/status, settlement state, reward status,
-background-job status, and distinct participant count. The lookback is bounded to 1–90 days at the
-service boundary. It is computed on demand in a repeatable-read, read-only
-transaction; no analytics events or identifiers are persisted. Raw wallet
-addresses, transaction hashes, emails, and payloads are never selected into
-the response. Distinct-participant counts below five are suppressed. The
-window is the retention policy: only source records created in that interval
-contribute to the response. Access requires the internal service secret and
-the dedicated internal analytics-read permission.
+`GET /health/dependencies` checks PostgreSQL, Redis cache, and each configured
+Soroban RPC endpoint. It reports healthy/degraded/unavailable overall status
+and a per-dependency remediation hint. Redis is optional and its absence is
+degraded, not a hard outage. Missing or malformed RPC configuration is
+reported as misconfigured. RPC requests have a short timeout and endpoint
+URLs, credentials, and provider error bodies are never included in the report.
+HTTP 503 means a required dependency (database or RPC) is unavailable or
+misconfigured; optional degradation remains HTTP 200. The endpoint is local
+diagnostics and exposes no secrets.
