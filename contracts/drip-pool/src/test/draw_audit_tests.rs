@@ -228,6 +228,7 @@ fn envelope_root_binds_round_and_count() {
 #[test]
 fn round_draw_end_to_end_recomputes_and_credits_winner() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -364,6 +365,7 @@ fn hex32(v: &BytesN<32>) -> std::string::String {
 #[test]
 fn round_draw_rejects_wrong_seed_and_missing_commit() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let alice = Address::generate(&env);
 
@@ -420,6 +422,7 @@ fn round_draw_rejects_wrong_seed_and_missing_commit() {
 #[test]
 fn round_draw_rejects_forged_snapshot_membership() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let alice = Address::generate(&env);
     let outsider = Address::generate(&env);
@@ -461,6 +464,7 @@ fn round_draw_rejects_forged_snapshot_membership() {
 #[test]
 fn round_commit_draw_requires_locked_round_and_signer() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     let stranger = Address::generate(&env);
 
     let round_id = client.open_round(&admin);
@@ -518,6 +522,7 @@ fn round_commit_draw_requires_locked_round_and_signer() {
 #[test]
 fn round_draw_requires_settled_round_and_emits_audit_event() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let alice = Address::generate(&env);
     let round_id = client.open_round(&admin);

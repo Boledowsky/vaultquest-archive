@@ -23,6 +23,11 @@ import {
   type ContractBehaviorError,
 } from "../lib/conformance-spec";
 import { mapContractErrorToRejection, getRejectionExplanation } from "../lib/rejectionReasons";
+import {
+  BusinessPolicyEngine,
+  BusinessPolicyError,
+  type BusinessPolicyOverrides,
+} from "../lib/business-policy";
 
 export interface QuestMilestone {
   id: string;
@@ -91,7 +96,7 @@ export function createSavingsService(policyOverrides: BusinessPolicyOverrides = 
     if (err) {
       const rejectionReason = mapContractErrorToRejection(err);
       const explanation = rejectionReason ? getRejectionExplanation(rejectionReason) : null;
-      const error = new Error(explanation?.userMessage || err);
+      const error = new Error(err);
       (error as any).rejectionExplanation = explanation;
       throw error;
     }
@@ -106,7 +111,7 @@ export function createSavingsService(policyOverrides: BusinessPolicyOverrides = 
     if (err) {
       const rejectionReason = mapContractErrorToRejection(err);
       const explanation = rejectionReason ? getRejectionExplanation(rejectionReason) : null;
-      const error = new Error(explanation?.userMessage || err);
+      const error = new Error(err);
       (error as any).rejectionExplanation = explanation;
       throw error;
     }
@@ -122,7 +127,7 @@ export function createSavingsService(policyOverrides: BusinessPolicyOverrides = 
     if (deadlineErr) {
       const rejectionReason = mapContractErrorToRejection(deadlineErr);
       const explanation = rejectionReason ? getRejectionExplanation(rejectionReason) : null;
-      const error = new Error(explanation?.userMessage || deadlineErr);
+      const error = new Error(deadlineErr);
       (error as any).rejectionExplanation = explanation;
       throw error;
     }

@@ -174,7 +174,7 @@ pub enum DataKey {
     RoundRandomness(u32), // RoundRandomness — the resolved winning ticket + provenance, set exactly once
     RoundSelectionCursor(u32), // i128 — cumulative weighted deposit processed so far by select_round_winner
     RoundSelectionSeq(u32), // u32 — last-processed canonical ordering position (see RoundParticipantSeq)
-    RoundWinner(u32),       // Address — the depositor whose ticket range contained the winning ticket
+    RoundWinner(u32), // Address — the depositor whose ticket range contained the winning ticket
     RoundParticipantSeq(Address, u32), // u32 — canonical, deposit-arrival-order position of an address within a round;
     // assigned once, at an address's first `round_deposit` into that round. Used only to give
     // `select_round_winner` a submitter-proof processing order — nobody choosing which addresses to
@@ -260,6 +260,7 @@ pub enum Error {
     RoundDrawAlreadyCommitted = 94, // round_commit_draw called twice for the same round (#718)
     RoundDrawNotSettled = 95,    // round_draw called on a round that isn't Settled (#718)
     RoundDrawWinnerNotInSnapshot = 96, // Merkle proof does not verify for this round's snapshot root (#718)
+    UnsafeRandomnessConfig = 97, // fewer than `Threshold` approved admins exist to commit randomness seeds (#657)
 }
 
 // ── Structs ────────────────────────────────────────────────────────────────
@@ -561,6 +562,37 @@ impl DripPool {
             .unwrap_or(1);
         if version != CONFIG_SCHEMA_VERSION {
             return Err(Error::IncompatibleConfig);
+        }
+        Ok(())
+    }
+
+    /// Fails closed if the contract's randomness-commit configuration
+    /// couldn't actually produce a manipulation-resistant draw (#657).
+    ///
+    /// `commit_round_randomness`'s N-of-N scheme (§ manipulation-resistant
+    /// round-winner randomness, above) is only unbiasable if at least one
+    /// committer keeps their seed secret until reveal — with a single
+    /// eligible committer, that one admin fully controls the seed and the
+    /// scheme provides no more protection than an admin picking the winner
+    /// directly. Reuses the contract's own existing multisig floor
+    /// (`Threshold`, already >= 2 by `DEFAULT_THRESHOLD`) as the
+    /// randomness-safety floor too, rather than introducing a second,
+    /// unrelated "how many admins is enough" constant: the same
+    /// N-of-N-honest-majority assumption governance already runs on is
+    /// exactly the assumption `commit_round_randomness` needs.
+    ///
+    /// Called from `open_round` so a misconfigured deployment (zero admins
+    /// beyond the deploying account, or a `Threshold` lowered to 1) can
+    /// never silently accept deposits into a round whose eventual draw has
+    /// no real randomness guarantee — better to refuse to open the round at
+    /// all than to let it fall through to `finalize_round_randomness_fallback`
+    /// (a liveness backstop for an honest-but-unresponsive committer, not a
+    /// substitute for having enough committers in the first place) by default.
+    fn require_randomness_config_safe(env: &Env) -> Result<(), Error> {
+        let admins = Self::get_admins(env);
+        let threshold = Self::get_threshold(env);
+        if admins.len() < threshold.max(2) {
+            return Err(Error::UnsafeRandomnessConfig);
         }
         Ok(())
     }
@@ -2595,6 +2627,7 @@ impl DripPool {
         caller.require_auth();
         Self::require_signer(&env, &caller)?;
         Self::require_compatible_config(&env)?;
+        Self::require_randomness_config_safe(&env)?;
 
         let id: u32 = env
             .storage()
@@ -2663,8 +2696,7 @@ impl DripPool {
                 / (ROUND_TICKET_WEIGHT_WINDOW_SECONDS as u128);
             core::cmp::max(bps as u32, ROUND_MIN_TICKET_WEIGHT_BPS)
         };
-        let weighted: i128 =
-            amount.saturating_mul(weight_bps as i128) / (BPS_DENOMINATOR as i128);
+        let weighted: i128 = amount.saturating_mul(weight_bps as i128) / (BPS_DENOMINATOR as i128);
 
         let key = DataKey::RoundDeposit(who.clone(), round_id);
         let existing: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -2685,9 +2717,7 @@ impl DripPool {
             let next_seq: u32 = env.storage().persistent().get(&nonce_key).unwrap_or(0);
             env.storage().persistent().set(&seq_key, &next_seq);
             Self::bump_round(&env, &seq_key);
-            env.storage()
-                .persistent()
-                .set(&nonce_key, &(next_seq + 1));
+            env.storage().persistent().set(&nonce_key, &(next_seq + 1));
             Self::bump_round(&env, &nonce_key);
         }
 
@@ -3187,8 +3217,7 @@ impl DripPool {
                 .unwrap_or(0);
             if deposit > 0 {
                 let segment_end = cursor.saturating_add(deposit);
-                if randomness.winning_ticket >= cursor && randomness.winning_ticket < segment_end
-                {
+                if randomness.winning_ticket >= cursor && randomness.winning_ticket < segment_end {
                     winner = Some(who.clone());
                 }
                 cursor = segment_end;

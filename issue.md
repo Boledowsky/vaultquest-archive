@@ -63,3 +63,65 @@
 - `lib/deployment-manifest.ts`
 - `app/layout.jsx`
 - `docs/DEPLOYMENT_PROVENANCE.md`
+
+---
+
+## #778 – Stable pagination and filtering for rapidly changing datasets
+
+**Problem:** `listRecoverableActions` used `skip`/`offset` pagination, which causes duplicate or skipped records when rows are inserted or change status while a user paginates.
+
+**Resolution:**
+- Replaced `skip: offset` with cursor-based pagination `(cursor: { id }, skip: 1)` in `listRecoverableActions`, ordering deterministically on `(submittedAt, id)`.
+- Documented filter behavior for hidden, deleted, and restricted records in `docs/PAGINATION_AND_FILTERING.md`.
+- All key list endpoints (`/actions`, `/saved-pools`, `/admin/audit`, `/admin/partial-failures`) now use cursor pagination; offset is isolated to the in-memory search index which operates on a stable snapshot.
+
+**Files changed:**
+- `backend/src/services/ledger.ts` — `listRecoverableActions` converted to cursor-based
+- `docs/PAGINATION_AND_FILTERING.md` — new filter behavior documentation
+
+---
+
+## #791 – Scoped maintainer impersonation for support debugging
+
+**Problem:** No safe way for maintainers to reproduce user-reported issues without gaining broad access to private data.
+
+**Resolution:**
+- Added `ImpersonationService` with time-limited (default 30 min, max 4 h) sessions.
+- Sessions are scoped (read-only by default), audited (every action written to `audit_trail`), and visible (UI banner via `X-Impersonation-Active` header).
+- Dangerous mutations (withdraw, select_winner, compensating) are blocked unless `allowMutations: true` is set explicitly on session creation.
+- One active session per maintainer enforced by the service.
+- New permission `admin.impersonation.read/write` added to RBAC.
+
+**Files changed:**
+- `backend/src/services/impersonation.ts` — new ImpersonationService + InMemoryImpersonationStore
+- `backend/src/routes/impersonation.ts` — REST API (start / list / inspect / end)
+- `backend/src/middleware/impersonation.ts` — onRequest hook + assertImpersonationBlocked helper
+- `backend/prisma/schema.prisma` — ImpersonationSession model
+- `backend/prisma/migrations/20261001000000_add_impersonation_sessions/migration.sql`
+- `lib/rbac.ts` — admin.impersonation.read/write permissions + maintainer grants
+- `backend/src/app.ts` — wired ImpersonationService + routes
+- `app/app/admin/impersonation/page.jsx` — admin UI page
+- `components/ImpersonationBanner.jsx` — persistent warning banner
+- `app/layout.jsx` — banner mounted in root layout
+
+---
+
+## #793 – Partial failure dashboard for background and external integrations
+
+**Problem:** Maintainers had no unified view of operations stuck between internal state and external systems.
+
+**Resolution:**
+- Added `PartialFailureService` to record, list, and transition partial failures.
+- Failures are grouped by `operationType`, `severity`, and `state` in a summary endpoint.
+- All failures carry a human-readable `description` and sanitized `metadata` (no secrets).
+- List endpoints use cursor-based pagination (newest first).
+- State transitions (retry → resolved / still_failing, resolve, ignore) are audited.
+- Admin dashboard page with summary cards, filterable table, and inline action modal.
+
+**Files changed:**
+- `backend/src/services/partialFailureService.ts` — new PartialFailureService
+- `backend/src/routes/partialFailures.ts` — REST API (list / summary / inspect / record / retry / resolve / ignore)
+- `backend/prisma/schema.prisma` — PartialFailure model
+- `backend/prisma/migrations/20261001000001_add_partial_failures/migration.sql`
+- `backend/src/app.ts` — wired PartialFailureService + routes
+- `app/app/admin/partial-failures/page.jsx` — admin dashboard UI

@@ -315,4 +315,5 @@ export function trendAggregationRoutes(service: TrendAggregationService, apiKeyG
       });
     }
   });
+  };
 }

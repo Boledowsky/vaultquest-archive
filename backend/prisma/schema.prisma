@@ -509,3 +509,93 @@ model TrendAggregate {
   @@index([windowStart, windowEnd])
   @@map("trend_aggregates")
 }
+
+// Idempotency keys for replay protection on high-risk write operations
+model IdempotencyKey {
+  id             String   @id @default(uuid()) @db.Uuid
+  key            String   @unique
+  operationType  String   @map("operation_type")
+  walletAddress  String?  @map("wallet_address")
+  status         String   @default("pending") // "pending", "completed", "failed", "expired"
+  response       Json?    @map("response")
+  errorCode      String?  @map("error_code")
+  errorDetail    String?  @map("error_detail")
+  expiresAt      DateTime @map("expires_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([walletAddress, expiresAt])
+  @@index([expiresAt])
+  @@index([operationType, expiresAt])
+  @@map("idempotency_keys")
+}
+
+// #791 — scoped, time-limited maintainer impersonation sessions.
+model ImpersonationSession {
+  id                  String    @id @default(uuid()) @db.Uuid
+  maintainerSubject   String    @map("maintainer_subject")
+  targetWallet        String    @map("target_wallet")
+  reason              String
+  allowMutations      Boolean   @default(false) @map("allow_mutations")
+  state               String    @default("active") // active | expired | ended
+  startedAt           DateTime  @default(now()) @map("started_at") @db.Timestamptz
+  expiresAt           DateTime  @map("expires_at") @db.Timestamptz
+  endedAt             DateTime? @map("ended_at") @db.Timestamptz
+
+  @@index([maintainerSubject, state])
+  @@index([expiresAt])
+  @@map("impersonation_sessions")
+}
+
+// #793 — partial failure tracking for background and external integrations.
+// Records operations that completed partially: one side succeeded but the
+// other (external system, on-chain confirmation, email, etc.) did not.
+model PartialFailure {
+  id              String    @id @default(uuid()) @db.Uuid
+  operationType   String    @map("operation_type")   // "background_job" | "external_call" | "on_chain" | "wallet_flow"
+  operationId     String    @map("operation_id")     // e.g. actionId, jobId, txHash
+  externalRef     String?   @map("external_ref")     // external system reference (no secrets)
+  severity        String    @default("medium")       // "low" | "medium" | "high" | "critical"
+  state           String    @default("unresolved")   // "unresolved" | "retryable" | "resolved" | "ignored"
+  retryable       Boolean   @default(false)
+  description     String                             // human-readable summary (no secrets)
+  metadata        Json?                              // sanitized context for investigation
+  detectedAt      DateTime  @default(now()) @map("detected_at") @db.Timestamptz
+  staleSinceAt    DateTime? @map("stale_since_at") @db.Timestamptz
+  lastRetriedAt   DateTime? @map("last_retried_at") @db.Timestamptz
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz
+  resolvedBy      String?   @map("resolved_by")
+  resolutionNote  String?   @map("resolution_note")
+  ignoredAt       DateTime? @map("ignored_at") @db.Timestamptz
+  ignoredBy       String?   @map("ignored_by")
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([state, detectedAt(sort: Desc)])
+  @@index([operationType, state])
+  @@index([severity, state])
+  @@index([retryable, state])
+  @@map("partial_failures")
+}
+
+// #799 — Processed webhook event IDs and cached responses for replay window and deduplication.
+model ProcessedWebhookEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  provider       String
+  eventId        String    @map("event_id")
+  eventType      String    @map("event_type")
+  payloadHash    String    @map("payload_hash")
+  status         String    @default("processed") // "processing" | "processed" | "failed"
+  response       Json?     @map("response")
+  error          String?   @map("error")
+  receivedAt     DateTime  @default(now()) @map("received_at") @db.Timestamptz
+  processedAt    DateTime? @map("processed_at") @db.Timestamptz
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([provider, eventId])
+  @@index([expiresAt])
+  @@index([provider, receivedAt])
+  @@map("processed_webhook_events")
+}
+

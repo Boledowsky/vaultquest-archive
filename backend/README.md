@@ -146,7 +146,7 @@ Validation rules (enforced by `Zod` in `src/imports/dryRun.ts`):
 - Rows that match an existing ledger entry are reported as `update` or `skip` depending on whether the amount differs.
 - Rows that collide with a pending action for the same wallet and pool are reported as `conflicts` with a code and human-readable message.
 
-Conflict and error entries never echo column values other than the wallet address and pool identifier, and never include tokens, secrets or signed payloads. See [`docs/IMPORTS.md`](docs/IMPORTS.md) for the complete field reference and example responses.
+Conflict and error entries never echo column values other than the wallet address and pool identifier, and never include tokens, secrets or signed payloads. See [`docs/API.md`](../docs/API.md) for the complete field reference and example responses.
 
 ## Tests
 
@@ -155,6 +155,25 @@ Tests use Testcontainers to spin up Postgres 16 per run. Docker must be availabl
 ```bash
 pnpm test
 ```
+# Post-restore validation
+
+After restoring a backup, run the backend db:validate-restore script with
+DATABASE_URL set to the restored database. The command is read-only and runs
+its checks in a repeatable-read, read-only transaction. It reports missing
+core tables and counts for inconsistent confirmed actions, settlement
+timestamps, reward grants, saved-pool registry references, chain-event
+identifiers, and duplicate/orphan quest records. It never prints wallet
+addresses, transaction hashes, payloads, or the database URL.
+
+Exit code 0 means the checked invariants passed; 1 means the report needs
+maintainer review; 2 means the database/schema could not be checked. A
+reported count is a recovery lead, not permission to edit a financial record:
+compare affected rows with chain history and use the normal reconciliation
+workflow. Escalate unresolved payout, settlement, or chain-event mismatches to
+the protocol maintainer before resuming user-facing operations. This is a
+consistency check, not a replacement for the chain-aware disaster-recovery
+drill.
+
 # Privacy-preserving maintainer analytics
 
 The authenticated internal endpoint `/internal/analytics/summary` returns a
