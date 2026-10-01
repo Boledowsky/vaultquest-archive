@@ -73,64 +73,43 @@ Unknown exceptions fall back to `INTERNAL`. Frontends should retry only when
 `error.retryable` is `true` (with backoff, honouring `Retry-After`); never
 auto-retry validation, auth, or conflict errors.
 
-## Bulk import dry run
+## Data exports (`GET /exports`)
 
-Bulk imports are previewed before any record is written. The dry-run endpoint
-returns the same envelope as other routes and never persists changes.
+Wallet-scoped exports are the one documented exception to the `data`/`meta`
+envelope above. They are generated on demand and never stored, so the response
+is a downloadable JSON bundle with its own contract:
 
 ```json
 {
+  "metadata": {
+    "schema_version": "1.0.0",
+    "generated_at": "2026-03-01T12:00:00.000Z",
+    "expires_at": "2026-03-02T12:00:00.000Z",
+    "retention_hours": 24,
+    "wallet": "GALICE",
+    "generated_by_role": "user",
+    "sections": ["actions", "saved_pools"],
+    "record_counts": { "actions": 1, "saved_pools": 1 },
+    "truncated": false,
+    "max_records_per_section": 10000,
+    "checksum": "<key sha256 of `data`>"
+  },
   "data": {
-    "dry_run": true,
-    "counts": {
-      "create": 12,
-      "update": 3,
-      "skip": 1,
-      "duplicate": 2,
-      "error": 1
-    },
-    "rows": [
-      {
-        "row": 1,
-        "action": "create",
-        "id": "vault_new",
-        "errors": []
-      },
-      {
-        "row": 4,
-        "action": "duplicate",
-        "id": "vault_dup",
-        "errors": [],
-        "conflict": {
-          "kind": "duplicate_in_payload",
-          "matches_row": 2
-        }
-      },
-      {
-        "row": 7,
-        "action": "error",
-        "id": null,
-        "errors": [
-          {
-            "path": "vault_id",
-            "code": "invalid_string",
-            "message": "Vault ID must be a non-empty string."
-          }
-        ]
-      }
-    ]
+    "actions": [],
+    "saved_pools": []
   }
 }
 ```
 
-The dry run is pure: it validates the payload, classifies each row as
-`create`, `update`, `skip`, `duplicate` or `error`, and reports conflicts
-without exposing secrets. Row errors use the same Zod `issues` shape as the
-validation envelope so clients can render them with existing form code. Conflict
-details only include identifiers and row numbers; secrets and credentials are
-never echoed back.
-
-When the payload itself is malformed (for example missing `rows`), the route
-returns the standard `INVALID_PAYLOAD` error envelope instead of a dry-run
-result. Partial failures are reported per row in `data.rows` with an `error`
-action and are never written during the dry run.
+- `Get /exports` is authenticated and requires the `own.data.export` permission.
+- `?wallet=` defaults to the caller's own wallet. Exporting another wallet
+  requires `admin.export.any` and is enforced in the service layer.
+- `?sections=` is a comma-separated subset of `actions` and `saved_pools`.
+- Responses are sent with `Cache-Control: no-store` and a `Content-Disposition`
+  attachment filename derived from `generated_at`.
+- Exports are not persisted; consumers must discard the bundle after
+  `expires_at` (`retention_hours` from generation).
+- `truncated` is `true` when a section hit `max_records_per_section`; the
+  corresponding `record_counts` entry then reflects the capped count.
+- `checksum` is the SHA-256 of the serialized `data` object for tamper
+  detection by downstream consumers.

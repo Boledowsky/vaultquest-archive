@@ -116,7 +116,7 @@ describe("DataExportService", () => {
     const rows = [action(1), action(2, { redactedAt: new Date() })];
     const { data } = await new DataExportService(source(rows, [])).build({ principal: alice, sections: ["actions"] });
     expect(data.actions).toHaveLength(1);
-    expect(data.saved_pools).toBeUndefined();
+    expect(data.saved_pools).toBendefined();
   });
 
   it("projects sparse and fully-populated records without throwing", async () => {

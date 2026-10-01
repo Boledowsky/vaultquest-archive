@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { createHash } from "crypto";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger(process.env.LOG_LEVEL ?? "info");
@@ -98,6 +99,72 @@ export interface PreviewOptions {
   /** Actor, for the audit log line. */
   actor?: string;
 }
+
+/**
+ * Privacy-safe export schema for user-owned records.
+ *
+ * Only records scoped to the requesting wallet are included. Other users'
+ * data is never referenced or joined into the export payload.
+ */
+export const EXPORT_SCHEMA_VERSION = "1.0.0";
+
+export type ExportRecordType =
+  | "action_ledger"
+  | "vault_settlement"
+  | "wallet_session"
+  | "wallet_challenge";
+
+export interface ExportRecord {
+  type: ExportRecordType;
+  id: string;
+  createdAt: string;
+  data: Record<string, unknown>;
+}
+
+export interface ExportMetadata {
+  schemaVersion: string;
+  generatedAt: string;
+  expiresAt: string;
+  walletAddress: string;
+  recordCount: number;
+  recordTypes: ExportRecordType[];
+  checksum: string;
+}
+
+export interface UserExport {
+  metadata: ExportMetadata;
+  records: ExportRecord[];
+}
+
+export interface ExportOptions {
+  /** Wallet requesting the export. Authorization is scoped to this address. */
+  walletAddress: string;
+  /** Optional caller identity used for audit logging. */
+  actor?: string;
+  /** Optional subset of record types. Defaults to all user-owned types. */
+  recordTypes?: ExportRecordType[];
+  /** How long the generated export remains valid. Defaults to 24h. */
+  ttlMs?: number;
+  /** Hard cap on records to prevent unbounded exports. */
+  maxRecords?: number;
+}
+
+export interface ExportAuthorization {
+  authorized: boolean;
+  reason?: string;
+}
+
+export const DEFAULT_EXPORT_TTL_MS = 24 * 60 * 60 * 1000;
+export const DEFAULT_EXPORT_MAX_RECORDS = 10_000;
+
+const ALL_EXPORT_RECORD_TYPES: ExportRecordType[] = [
+  "action_ledger",
+  "vault_settlement",
+  "wallet_session",
+  "wallet_challenge",
+];
+
+const WALLET_ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 
 /**
  * Retention policy definitions
@@ -983,5 +1050,201 @@ export class DataRetentionService {
     // For now, return false (safe default: don't delete if unsure)
     logger.warn({ table, recordId }, "protection check not fully implemented");
     return false;
+  }
+
+  /**
+   * Verify that the caller is authorized to export data for the given wallet.
+   *
+   * Authorization is scoped strictly to the requesting wallet address: a user
+   * may only export records that belong to their own wallet. The `actor`
+   * parameter is informational and must match the wallet address when present.
+   */
+  async authorizeExport(opts: ExportOptions): Promise<ExportAuthorization> {
+    const wallet = opts.walletAddress?.trim();
+
+    if (!wallet) {
+      return { authorized: false, reason: "walletAddress is required" };
+    }
+
+    if (!WALLET_ADDRESS_PATTERN.test(wallet)) {
+      return { authorized: false, reason: "walletAddress is not a valid EVM address" };
+    }
+
+    if (opts.actor && opts.actor.toLowerCase() !== wallet.toLowerCase()) {
+      return {
+        authorized: false,
+        reason: "actor does not match walletAddress; cross-wallet export denied",
+      };
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { walletAddress: wallet },
+      select: { id: true, walletAddress: true },
+    });
+
+    if (!user) {
+      return { authorized: false, reason: "wallet is not registered" };
+    }
+
+    return { authorized: true };
+  }
+
+  /**
+   * Build a privacy-safe export for a single user's records and history.
+   *
+   * The export contains only records owned by the requesting wallet. Records
+   * belonging to other users are never queried, joined, or included. The
+   * payload carries schema version, generation timestamp, expiration, and a
+   * checksum so downstream consumers can verify integrity.
+   */
+  async generateUserExport(opts: ExportOptions): Promise<UserExport> {
+    const auth = await this.authorizeExport(opts);
+    if (!auth.authorized) {
+      logger.warn(
+        { walletAddress: opts.walletAddress, reason: auth.reason, actor: opts.actor },
+        "user export denied"
+      );
+      throw new Error(`Export denied: ${auth.reason ?? "unauthorized"}`);
+    }
+
+    const wallet = opts.walletAddress.trim();
+    const recordTypes = opts.recordTypes?.length ? opts.recordTypes : ALL_EXPORT_RECORD_TYPES;
+    const ttlMs = opts.ttlMs ?? DEFAULT_EXPORT_TTL_MS;
+    const maxRecords = opts.maxRecords ?? DEFAULT_EXPORT_MAX_RECORDS;
+    const generatedAt = new Date();
+    const expiresAt = new Date(generatedAt.getTime() + ttlMs);
+
+    const records: ExportRecord[] = [];
+
+    for (const type of recordTypes) {
+      const remaining = maxRecords - records.length;
+      if (remaining <= 0) break;
+      const batch = await this.collectRecordsForType(type, wallet, remaining);
+      records.push(...batch);
+    }
+
+    const checksum = createHash("sha256")
+      .update(
+        JSON.stringify({
+          schemaVersion: EXPORT_SCHEMA_VERSION,
+          walletAddress: wallet,
+          generatedAt: generatedAt.toISOString(),
+          records,
+        })
+      )
+      .digest("hex");
+
+    const metadata: ExportMetadata = {
+      schemaVersion: EXPORT_SCHEMA_VERSION,
+      generatedAt: generatedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      walletAddress: wallet,
+      recordCount: records.length,
+      recordTypes,
+      checksum,
+    };
+
+    logger.info(
+      {
+        walletAddress: wallet,
+        actor: opts.actor,
+        recordCount: records.length,
+        recordTypes,
+        expiresAt: metadata.expiresAt,
+      },
+      "user export generated"
+    );
+
+    return { metadata, records };
+  }
+
+  /**
+   * Determine whether a previously generated export is still valid.
+   */
+  isExportExpired(metadata: Pick<ExportMetadata, "expiresAt">, now: Date = new Date()): boolean {
+    return new Date(metadata.expiresAt).getTime() <= now.getTime();
+  }
+
+  private async collectRecordsForType(
+    type: ExportRecordType,
+    walletAddress: string,
+    limit: number
+  ): Promise<ExportRecord[]> {
+    switch (type) {
+      case "action_ledger": {
+        const rows = await this.prisma.actionLedger.findMany({
+          where: { walletAddress },
+          orderBy: { createdAt: "desc" },
+          take: limit,
+        });
+        return rows.map((row) => ({
+          type: "action_ledger" as const,
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+          data: {
+            actionType: row.actionType,
+            status: row.status,
+            txHash: row.txHash,
+            amount: row.amount?.toString?.() ?? row.amount,
+            vaultId: row.vaultId,
+          },
+        }));
+      }
+
+      case "vault_settlement": {
+        const rows = await this.prisma.vaultSettlement.findMany({
+          where: { walletAddress },
+          orderBy: { createdAt: "desc" },
+          take: limit,
+        });
+        return rows.map((row) => ({
+          type: "vault_settlement" as const,
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+          data: {
+            vaultId: row.vaultId,
+            amount: row.amount?.toString?.() ?? row.amount,
+            status: row.status,
+            settledAt: row.settledAt?.toISOString?.() ?? null,
+          },
+        }));
+      }
+
+      case "wallet_session": {
+        const rows = await this.prisma.walletSession.findMany({
+          where: { walletAddress },
+          orderBy: { createdAt: "desc" },
+          take: limit,
+        });
+        return rows.map((row) => ({
+          type: "wallet_session" as const,
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+          data: {
+            expiresAt: row.expiresAt?.toISOString?.() ?? null,
+            revokedAt: row.revokedAt?.toISOString?.() ?? null,
+          },
+        }));
+      }
+
+      case "wallet_challenge": {
+        const rows = await this.prisma.walletChallenge.findMany({
+          where: { walletAddress },
+          orderBy: { createdAt: "desc" },
+          take: limit,
+        });
+        return rows.map((row) => ({
+          type: "wallet_challenge" as const,
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+          data: {
+            expiresAt: row.expiresAt?.toISOString?.() ?? null,
+          },
+        }));
+      }
+
+      default:
+        return [];
+    }
   }
 }
