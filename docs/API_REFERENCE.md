@@ -15,6 +15,7 @@ Comprehensive reference documentation for the VaultQuest backend REST API. This 
   - [Dashboard](#dashboard)
   - [Saved Pools](#saved-pools)
   - [Metrics](#metrics)
+  - [Webhooks & Callbacks](#webhooks--callbacks)
 - [Status Lifecycle](#status-lifecycle)
 - [Data Types](#data-types)
 
@@ -882,6 +883,95 @@ curl -X GET \
   }
 }
 ```
+
+### Webhooks & Callbacks
+
+Inbound webhooks and integration callbacks (#799) for payment providers, contract oracles, and internal services.
+
+#### Ingest Webhook Event
+
+```
+POST /webhooks/:provider
+POST /webhooks/stripe
+POST /webhooks/internal
+POST /webhooks/stellar
+POST /webhooks/vault
+POST /webhooks/draw-oracle
+```
+
+Supported `:provider` values: `stripe`, `internal`, `stellar`, `vaultquest`, `custom`.
+
+**Headers (Stripe)**:
+- `Stripe-Signature`: `t=<timestamp>,v1=<hmac_signature>`
+
+**Headers (Internal / Custom)**:
+- `X-VaultQuest-Signature` or `X-Webhook-Signature`: HMAC-SHA256 signature
+- `X-VaultQuest-Timestamp` or `X-Webhook-Timestamp`: Unix epoch seconds or ISO string
+
+**Headers (Stellar)**:
+- `X-Stellar-Signature` or `X-Webhook-Signature`: Ed25519 signature (hex or base64)
+- `X-Stellar-Timestamp` or `X-Webhook-Timestamp`: Unix epoch seconds or ISO string
+
+**Query Parameters**:
+- `dry_run` (optional boolean): When `true`, verifies signature and payload without executing side effects or persisting event.
+
+**Success Response (`200 OK`)**:
+
+```json
+{
+  "data": {
+    "status": "processed",
+    "duplicate": false,
+    "event_id": "evt_12345",
+    "event_type": "payment_intent.succeeded",
+    "result": {
+      "credited": true
+    }
+  }
+}
+```
+
+**Duplicate Event Response (`200 OK`)**:
+
+```json
+{
+  "data": {
+    "status": "processed",
+    "duplicate": true,
+    "event_id": "evt_12345",
+    "event_type": "payment_intent.succeeded",
+    "result": {
+      "credited": true
+    }
+  }
+}
+```
+
+**Dry Run Response (`200 OK`)**:
+
+```json
+{
+  "data": {
+    "status": "verified",
+    "dry_run": true,
+    "provider": "stripe",
+    "event_id": "evt_12345",
+    "event_type": "payment_intent.succeeded",
+    "timestamp": "2026-10-01T12:00:00.000Z"
+  }
+}
+```
+
+**Error Codes**:
+- `WEBHOOK_SIGNATURE_MISSING` (400)
+- `WEBHOOK_SIGNATURE_INVALID` (400)
+- `WEBHOOK_TIMESTAMP_MISSING` (400)
+- `WEBHOOK_TIMESTAMP_STALE` (400)
+- `WEBHOOK_EVENT_MALFORMED` (400)
+- `WEBHOOK_PROVIDER_UNSUPPORTED` (400)
+- `WEBHOOK_DUPLICATE_EVENT` (409)
+
+See [WEBHOOKS.md](./WEBHOOKS.md) for full protocol details.
 
 ## Status Lifecycle
 
