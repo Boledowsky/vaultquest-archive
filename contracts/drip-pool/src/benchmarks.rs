@@ -91,6 +91,10 @@ fn deposit_all(env: &Env, client: &DripPoolClient, participants: &Vec<Address>, 
 /// Benchmark helper (#715): resolves a single depositor as a round's winner
 /// via the full commit-reveal flow, so `draw_winner` benchmarks exercise the
 /// real post-#715 signature/lookup path.
+///
+/// Seeds a second admin first (#657): `open_round` now refuses to open with
+/// fewer than `Threshold` approved admins - see the equivalent note on
+/// `setup_round_with_winner` in `src/test.rs`.
 fn resolve_round_winner(
     env: &Env,
     client: &DripPoolClient,
@@ -98,6 +102,7 @@ fn resolve_round_winner(
     depositor: &Address,
     amount: i128,
 ) -> u32 {
+    client.seed_admin(admin, &Address::generate(env));
     let round_id = client.open_round(admin);
     client.round_deposit(depositor, &round_id, &amount);
     let seed = BytesN::from_array(env, &[7u8; 32]);
@@ -1330,6 +1335,7 @@ fn bench_prune_round_1000_participants() {
     let (env, client, admin, token_id) = setup();
     client.create(&admin);
     token_setup(&env, &client, &admin, &token_id);
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let round_id = client.open_round(&admin);
     let participants = create_participants(&env, &client, &token_id, 1000);

@@ -33,17 +33,20 @@ Keep this table in sync in the same PR as any schema change.
 | `repair_approvals` | off-chain | Backup | Dual-control approvals. |
 | `repair_quarantine` | off-chain | Backup | Drift triage. |
 | `saved_pools` | off-chain | Backup | Watchlists. |
-| `Product` | off-chain | Backup | Catalogue. |
-| `ProductImage` | off-chain | Backup | Catalogue. |
-| `categories` | off-chain | Backup | Catalogue. |
-| `draw_proofs` | off-chain | Backup | Built from live contract-state RPC reads at generation time; not reproducible from events. |
-| `notifications` | off-chain | Backup | Reminders and dismissals. |
-| `notification_preferences` | off-chain | Backup | Preferences. |
-| `transaction_metrics` | off-chain | Backup | Client-reported timing telemetry. |
+| `feature_flags` | off-chain | Backup | Runtime toggles. |
+| `feature_flag_audits` | off-chain | Backup | Feature flag audit trail. |
+| `outbound_actions` | off-chain | Backup | Queued outbound actions. |
+| `dashboard_aggregates` | off-chain | Backup | Cached dashboard aggregates. |
+| `trend_aggregates` | off-chain | Backup | Historical trend rollups. |
+| `partial_failures` | off-chain | Backup | Partial failure investigation records. |
 | `action_leases` | ephemeral | Dropped | Worker leases, stale after restore. |
 | `job_leases` | ephemeral | Dropped | Cron leases; stale ones would block jobs until expiry. |
+| `background_jobs` | ephemeral | Dropped | Background worker queue. |
+| `idempotency_keys` | ephemeral | Dropped | Idempotency keys; safe to expire. |
+| `impersonation_sessions` | ephemeral | Dropped | Maintainer impersonation sessions. |
 | `wallet_challenges` | ephemeral | Dropped | Short-lived nonces. |
 | `wallet_sessions` | ephemeral | Dropped | Restoring would resurrect sessions revoked after the backup; users sign in again. |
+| `processed_webhook_events` | ephemeral | Dropped | Processed webhook event deduplication records. |
 
 ## 2. Off-chain backup strategy
 
