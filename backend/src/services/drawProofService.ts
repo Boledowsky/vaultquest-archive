@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Logger } from "pino";
 import { withTelemetry } from "./telemetry.js";
+import { canonicalize, canonicalJson, canonicalHash } from "../../../lib/canonical.js";
 import {
   assembleDrawProof,
   verifyProofIntegrity,
@@ -55,6 +56,12 @@ export interface DrawProofRecord {
 export interface GenerateProofOptions {
   actionId: string;
   contractSpecHash?: string;
+}
+
+export interface CanonicalProofPayload {
+  canonical: string;
+  hash: string;
+  version: "v1";
 }
 
 export class DrawProofService {
@@ -127,6 +134,21 @@ export class DrawProofService {
       return null;
     }
 
+    // Canonicalize the action payload before extracting fields so that
+    // equivalent payloads (key order, whitespace, casing, numeric precision)
+    // produce identical downstream hashes/signatures. Legacy payloads that
+    // don't canonicalize cleanly fall back to the raw payload.
+    let canonicalPayload: Record<string, unknown>;
+    try {
+      canonicalPayload = canonicalize(payload) as Record<string, unknown>;
+    } catch (err) {
+      this.logger?.warn(
+        { err, actionId: options.actionId },
+        "draw proof: payload canonicalization failed, using raw payload",
+      );
+      canonicalPayload = payload;
+    }
+
     const payload = (action.actionPayload ?? {}) as Record<string, unknown>;
     const contractId = String(
       payload.contract_id || payload.pool_id || "unknown",
@@ -137,6 +159,10 @@ export class DrawProofService {
     const drawLedger = Number(
       payload.draw_ledger || action.submittedAt?.getTime() || Date.now(),
     );
+
+    // Normalize numeric precision on the prize amount so that equivalent
+    // values (e.g. "1.50" vs "1.5" vs "1.500") hash identically.
+    const normalizedPrizeAmount = normalizeDecimalString(prizeAmount);
 
     if (!winnerAddress) {
       this.logger?.warn(
@@ -159,6 +185,12 @@ export class DrawProofService {
     let payoutTxHash = action.txHash || "";
     let payoutLedgerSeq = drawLedger + 1;
     let roundPrincipalSnapshot: string | undefined;
+
+    // Normalize the contract spec hash casing so equivalent hashes compare
+    // and sign consistently regardless of input casing.
+    const normalizedContractSpecHash = normalizeHex(
+      options.contractSpecHash || "unknown",
+    );
 
     try {
       participants = await this.fetchParticipants(contractId, drawLedger);
@@ -217,8 +249,19 @@ export class DrawProofService {
       ...(roundPrincipalSnapshot !== undefined && { roundPrincipalSnapshot }),
     };
 
+    // Replace the raw prize amount with the normalized form so the assembled
+    // proof is deterministic across equivalent inputs.
+    input.payoutAmount = normalizedPrizeAmount;
+    input.contractSpecHash = normalizedContractSpecHash;
+
     const proof = await assembleDrawProof(input);
     const docHash = await computeDrawId(contractId, roundId, drawLedger);
+
+    // Compute a canonical hash over the assembled proof so that equivalent
+    // proofs (regardless of key ordering or whitespace) produce the same
+    // digest. This is the value persisted and later verified.
+    const canonicalProofHash = await canonicalHash(proof as unknown as object);
+    const canonicalProofJson = canonicalJson(proof as unknown as object);
 
     const existing = await this.prisma.drawProof.findUnique({
       where: { drawId: proof.drawId },
@@ -241,6 +284,11 @@ export class DrawProofService {
       },
     });
 
+    this.logger?.debug(
+      { drawId: proof.drawId, canonicalProofHash },
+      "draw proof: canonical hash computed",
+    );
+
     this.logger?.info(
       { drawId: proof.drawId, roundId, winner: winnerAddress },
       "draw proof: generated",
@@ -260,6 +308,13 @@ export class DrawProofService {
     if (!record) return null;
 
     const proof = record.proofJson as unknown as DrawProof;
+
+    // Recompute the canonical hash and compare against the stored proof hash
+    // so that non-canonical or tampered records are rejected consistently.
+    const recomputedCanonicalHash = await canonicalHash(
+      proof as unknown as object,
+    );
+    const canonicalMatches = recomputedCanonicalHash === record.proofHash;
     const verification = await verifyProofIntegrity(proof);
 
     await this.prisma.drawProof.update({
@@ -276,6 +331,13 @@ export class DrawProofService {
       },
     });
 
+    if (!canonicalMatches) {
+      this.logger?.warn(
+        { drawId, stored: record.proofHash, recomputed: recomputedCanonicalHash },
+        "draw proof: canonical hash mismatch on verification",
+      );
+    }
+
     return {
       record: this.toRecord({
         ...record,
@@ -284,6 +346,31 @@ export class DrawProofService {
       }),
       verification,
     };
+  }
+
+  /**
+   * Returns the canonical serialization of a stored proof, for callers that
+   * need to re-sign, re-hash, or compare proofs across systems. Falls back to
+   * the raw JSON when the record predates canonical serialization.
+   */
+  async getCanonicalProof(drawId: string): Promise<CanonicalProofPayload | null> {
+    const record = await this.prisma.drawProof.findUnique({
+      where: { drawId },
+    });
+    if (!record) return null;
+
+    const proof = record.proofJson as unknown as DrawProof;
+    try {
+      const canonical = canonicalJson(proof as unknown as object);
+      const hash = await canonicalHash(proof as unknown as object);
+      return { canonical, hash, version: "v1" };
+    } catch (err) {
+      this.logger?.warn(
+        { err, drawId },
+        "draw proof: canonical serialization failed for legacy record",
+      );
+      return null;
+    }
   }
 
   async getProof(drawId: string): Promise<DrawProofRecord | null> {
@@ -506,6 +593,23 @@ export class DrawProofService {
     } catch {
       return undefined;
     }
+  }
+
+  private normalizeDecimalString(value: string): string {
+    const trimmed = value.trim();
+    if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return trimmed;
+    const [intPart, fracPart = ""] = trimmed.split(".");
+    const normalizedFrac = fracPart.replace(/0+$/, "");
+    const normalizedInt = intPart.replace(/^(-?)0+(?=\d)/, "$1");
+    return normalizedFrac.length > 0
+      ? `${normalizedInt}.${normalizedFrac}`
+      : normalizedInt;
+  }
+
+  private normalizeHex(value: string): string {
+    const trimmed = value.trim();
+    if (!/^0x[0-9a-fA-F]+$/.test(trimmed)) return trimmed.toLowerCase();
+    return `0x${trimmed.slice(2).toLowerCase()}`;
   }
 
   private toRecord(row: {

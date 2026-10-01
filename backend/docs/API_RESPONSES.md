@@ -38,7 +38,7 @@ Clients should pass the returned cursor back as `?cursor=` unchanged.
 
 All errors use one envelope. The full field reference, the complete code
 table (category, retryability, HTTP status) and worked examples live in
-[`docs/API.md`](../../docs/API.md#standard-errors); they are enforced by
+[`docs/API.md`(________docs/API.md#standard-errors); they are enforced by
 `tests/apiContract.spec.ts`.
 
 ```json
@@ -61,8 +61,8 @@ Codes, categories, retryability and user-facing text come from the catalog in
 `error_id` is the request's correlation id (also the `Correlation-Id` header)
 and is what users should quote to support.
 
-Validation responses include Zod `issues`; frontend code should prefer
-`error.message` for general copy and field-specific `issues` when rendering
+Validation responses include Zod `issues`; frontend code should prefer`
+error.message` for general copy and field-specific `issues` when rendering
 forms.
 
 ## Network and upstream failures

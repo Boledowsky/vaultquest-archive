@@ -8,6 +8,20 @@ const logger = createLogger(process.env.LOG_LEVEL ?? "info");
  * Covers unresolved failures, stale jobs, reconciliation drift, and user-impacting incidents.
  */
 
+export type HealthSeverity = "healthy" | "warning" | "critical";
+
+export type HealthCategory =
+  | "Orphaned Actions"
+  | "Stale Pending Events"
+  | "Failed Background Jobs"
+  | "Stale Action Leases"
+  | "Unresolved Vault Settlements"
+  | "Detected Reconciliation Drift"
+  | "Pending Repair Proposals"
+  | "Indexer Lag"
+  | "Poison Events"
+  | "Stale Orphans (>7 days)";
+
 export interface HealthIndicator {
   category: string;
   status: "healthy" | "warning" | "critical";
@@ -26,6 +40,13 @@ export interface OperationalHealthReport {
     criticalCount: number;
     warningCount: number;
   };
+}
+
+export interface HealthCategoryDetails {
+  category: string;
+  total: number;
+  items: Array<Record<string, unknown>>;
+  redacted: boolean;
 }
 
 /**
@@ -51,6 +72,18 @@ export class OperationalHealthService {
         description: `${orphanedCount} actions stuck in orphaned state (submitted tx_hash but no confirmation)`,
         actionable: "Investigate drift detection and repair; may indicate stalled blockchain or indexer lag",
         investigationLink: `SELECT id, tx_hash, error_code, updated_at FROM action_ledger WHERE status = 'orphaned' ORDER BY updated_at DESC LIMIT 20`,
+      });
+    }
+
+    const abandonedPendingCount = await this.countAbandonedPendingActions();
+    if (abandonedPendingCount > 0) {
+      indicators.push({
+        category: "Abandoned Pending Actions",
+        status: abandonedPendingCount > 10 ? "critical" : "warning",
+        count: abandonedPendingCount,
+        description: `${abandonedPendingCount} wallet actions have remained pending for more than 15 minutes`,
+        actionable: "Inspect recovery checkpoints; resume only actions that have not started an external wallet operation, and verify wallet activity for all others",
+        investigationLink: `SELECT id, wallet_address, action_type, recovery_checkpoint, created_at, updated_at FROM action_ledger WHERE status = 'pending' AND updated_at < NOW() - INTERVAL '15 minutes' ORDER BY updated_at ASC LIMIT 20`,
       });
     }
 
@@ -200,6 +233,15 @@ export class OperationalHealthService {
     return result;
   }
 
+  private async countAbandonedPendingActions(): Promise<number> {
+    return this.prisma.actionLedger.count({
+      where: {
+        status: "pending",
+        updatedAt: { lt: new Date(Date.now() - 15 * 60 * 1000) }
+      }
+    });
+  }
+
   private async countStalePendingEvents(): Promise<number> {
     const result = await this.prisma.pendingEvent.count({
       where: {
@@ -305,6 +347,26 @@ export class OperationalHealthService {
         total = await this.prisma.actionLedger.count({
           where: { status: "orphaned" },
         });
+        break;
+
+      case "Abandoned Pending Actions":
+        items = await this.prisma.actionLedger.findMany({
+          where: {
+            status: "pending",
+            updatedAt: { lt: new Date(Date.now() - 15 * 60 * 1000) },
+          },
+          select: {
+            id: true,
+            walletAddress: true,
+            actionType: true,
+            recoveryCheckpoint: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+          orderBy: { updatedAt: "asc" },
+          take: 50,
+        });
+        total = await this.countAbandonedPendingActions();
         break;
 
       case "Stale Pending Events":

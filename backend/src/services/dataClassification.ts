@@ -73,32 +73,27 @@ export const DATA_CLASSIFICATION: Record<Prisma.ModelName, TableClassification> 
   RepairApproval: { table: "repair_approvals", kind: "off-chain", rationale: "Dual-control approvals." },
   RepairQuarantine: { table: "repair_quarantine", kind: "off-chain", rationale: "Operator drift triage." },
   SavedPool: { table: "saved_pools", kind: "off-chain", rationale: "User watchlists." },
-  Product: { table: "Product", kind: "off-chain", rationale: "Catalogue data." },
-  ProductImage: { table: "ProductImage", kind: "off-chain", rationale: "Catalogue data." },
-  Category: { table: "categories", kind: "off-chain", rationale: "Catalogue data." },
-  DrawProof: {
-    table: "draw_proofs",
-    kind: "off-chain",
-    rationale: "Built from live contract-state RPC reads at generation time; not reproducible from events."
-  },
-  Notification: { table: "notifications", kind: "off-chain", rationale: "Reminders and user dismissals." },
-  NotificationPreference: {
-    table: "notification_preferences",
-    kind: "off-chain",
-    rationale: "User preferences."
-  },
-  TransactionMetric: {
-    table: "transaction_metrics",
-    kind: "off-chain",
-    rationale: "Client-reported confirmation timing telemetry."
-  },
+  FeatureFlag: { table: "feature_flags", kind: "off-chain", rationale: "Runtime toggles." },
+  FeatureFlagAudit: { table: "feature_flag_audits", kind: "off-chain", rationale: "Feature flag audit trail." },
+  OutboundAction: { table: "outbound_actions", kind: "off-chain", rationale: "Queued outbound actions and sync." },
+  DashboardAggregate: { table: "dashboard_aggregates", kind: "off-chain", rationale: "Cached dashboard aggregates." },
+  TrendAggregate: { table: "trend_aggregates", kind: "off-chain", rationale: "Historical trend rollups." },
+  PartialFailure: { table: "partial_failures", kind: "off-chain", rationale: "Partial failure investigation records." },
   ActionLease: { table: "action_leases", kind: "ephemeral", rationale: "Worker leases; stale after restore." },
   JobLease: { table: "job_leases", kind: "ephemeral", rationale: "Cron leases; stale after restore." },
+  BackgroundJob: { table: "background_jobs", kind: "ephemeral", rationale: "Background worker queue." },
+  IdempotencyKey: { table: "idempotency_keys", kind: "ephemeral", rationale: "Idempotency keys and cached results; safe to expire." },
+  ImpersonationSession: { table: "impersonation_sessions", kind: "ephemeral", rationale: "Short-lived maintainer impersonation sessions." },
   WalletChallenge: { table: "wallet_challenges", kind: "ephemeral", rationale: "Short-lived auth nonces." },
   WalletSession: {
     table: "wallet_sessions",
     kind: "ephemeral",
     rationale: "Restoring would resurrect sessions revoked after the backup; users re-authenticate."
+  },
+  ProcessedWebhookEvent: {
+    table: "processed_webhook_events",
+    kind: "ephemeral",
+    rationale: "Processed webhook event IDs and cached responses for replay window and deduplication; safe to drop or expire."
   }
 };
 

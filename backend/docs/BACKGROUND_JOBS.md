@@ -1,9 +1,10 @@
 # Background jobs
 
 Delayed and retryable work runs on a small durable job queue instead of inside
-request handlers. Today one operation uses it: **draw-proof generation** after
+request handlers. Today two operations use it: **draw-proof generation** after
 a `select_winner` action is confirmed (previously a fire-and-forget promise
-whose failures were only logged).
+whose failures were only logged) and the **stale-cache repair job** that
+rebuilds derived cache entries when their source records drift.
 
 ## Model
 
@@ -11,26 +12,30 @@ A job is a row in `background_jobs`:
 
 | Field | Meaning |
 |---|---|
-| `type` | Handler name, e.g. `draw_proof.generate`. |
+| `type` | Handler name, e.g. `draw_proof.generate` or `cache.stale_repair`. |
 | `payload` | JSON input, validated by the handler. |
-| `idempotency_key` | Unique. Enqueueing the same key twice yields one job (`draw_proof.generate:<actionId>`). |
+| `idempotency_key` | Unique. Enqueueing the same key twice yields one job (`draw_proof.generate:<actionId>`, `cache.stale_repair`). |
 | `status` | `queued` → `running` → `succeeded`, or `dead` (dead-letter). |
 | `attempts` / `max_attempts` | Attempts are counted when a job is claimed. Default max is 5. |
 | `run_at` | Earliest run time; doubles as the retry schedule. |
 | `correlation_id` | Ties the job back to the originating request. |
-| `last_error`, `failures` | Every failed attempt: `{ attempt, at, code, message, retryable }`. Messages are length-limited and wallet addresses / tx hashes are redacted. |
+| `last_error`, `failures` | Every failed attempt: `{ attempt, at, code, message, retryable }`. Messages are length-limited and wallet addresses / tx
+hashes are redacted. |
 
 Delivery is **at-least-once**, so handlers must be idempotent. The draw-proof
-handler is: it checks for an existing proof before inserting.
+ handler is: it checks for an existing proof before inserting. The stale-cache
+repair handler is as well: each write is a compare-and-set on the cache entry's
+source version, so a concurrent repair or a fresh application write wins and the
+job becomes a noop.
 
 ## Retry policy
 
 * Exponential backoff: `base 1s × 2^(attempt-1)`, capped at 5 minutes, with
-  jitter in the 50–100% range (`src/worker/retryPolicy.ts`).
+jjtter in the 50–100% range (`src/worker/retryPolicy.ts`).
 * Retried until `max_attempts`, then the job becomes `dead`.
 * **Not retried** (dead immediately): `NonRetryableJobError`, an unknown job
-  type, an invalid payload, or an `AppError` whose taxonomy entry is
-  `retryable: false`.
+type, an invalid payload, or an `AppError` whose taxonomy entry is
+@retryable: false`.
 
 ## Dead-letter behaviour
 
@@ -39,13 +44,13 @@ failure history, and is never picked up again automatically. After fixing the
 cause, requeue it with a fresh attempt budget:
 
 ```bash
-curl -s -H "x-internal-secret: $INTERNAL_SERVICE_SECRET" \
+curl -s -H x-internal-secret: $INTERNAL_SERVICE_SECRET \
   "http://localhost:3001/internal/jobs?status=dead"
-curl -s -X POST -H "x-internal-secret: $INTERNAL_SERVICE_SECRET" \
+curl -s -X POST -H x-internal-secret: $INTERNAL_SERVICE_SECRET \
   "http://localhost:3001/internal/jobs/<id>/retry"
 ```
 
-Endpoints are documented in [`docs/API.md`](../../docs/API.md#internal-background-jobs).
+Endpoints are documented in [`docs/API.md`((____docs/API.md#internal-background-jobs)).
 
 ## Crash safety
 
@@ -71,11 +76,13 @@ pnpm --filter backend dev               # API + worker
 
 Watch it work: log lines `job succeeded`, `job failed; will retry`, and
 `job moved to dead-letter` carry `job_id`, `job_type`, and `correlation_id`;
-`worker.job` telemetry is described in [`OBSERVABILITY.md`](./OBSERVABILITY.md).
+worker.job telemetry is described in [`OBSERVABILITY.md`](./OBSERVABILITY.md).
 
 To process one batch from a script or test without timers:
 
 ```ts
+import { JobWorker } from "../src/worker/worker.js";
+
 const worker = new JobWorker({ queue, handlers });
 await worker.runOnce(); // { claimed, succeeded, retried, dead }
 ```
@@ -87,6 +94,30 @@ await worker.runOnce(); // { claimed, succeeded, retried, dead }
 2. Enqueue with a deterministic `idempotencyKey`:
    `queue.enqueue({ type, payload, idempotencyKey })`.
 3. Add tests using `InMemoryJobStore` (see `tests/worker.spec.ts`).
+
+## Stale-cache repair job
+
+The `cache.stale_repair` job scans every cache kind (`vault_summary`,
+`user_dashboard`, `pool_stats`, `protocol_report`) and compares each entry's
+source version against the current source record version. Any mismatch is
+reported as stale and rebuilt from the current source version.
+
+The payload is `zod`-validated:
+
+```ts
+{ dryRun?: boolean }
+```
+
+- `dryRun: true` (default when invoked directly) reports stale entries without
+  writing. The job handler defaults to `false` so a regular scheduled run
+  actually repairs.
+- Repairs are idempotent: each write is a compare-and-set on the cache
+  entry's `sourceVersion`, so a concurrent repair or fresh application write
+  wins and the job becomes a noop.
+- Failures on a single entry are recorded in the result and logged, but do not
+  abort the run.
+
+Implementation lives in `src/services/staleCacheRepairService.ts`.
 
 ## Deployment
 

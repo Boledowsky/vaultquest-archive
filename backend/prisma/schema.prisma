@@ -1,3 +1,4 @@
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -68,6 +69,7 @@ model ActionLedger {
   finalizedLedger   Int?         @map("finalized_ledger")
   confirmationDepth Int?         @map("confirmation_depth")
   compensatesId     String?      @map("compensates_id")
+  recoveryCheckpoint Json?       @map("recovery_checkpoint")
 
   @@index([walletAddress, createdAt(sort: Desc)])
   @@index([status, updatedAt])
@@ -497,4 +499,91 @@ model OutboundAction {
 
   @@index([status, updatedAt])
   @@map("outbound_actions")
+}
+// #750 — dashboard aggregates for transactionally-consistent dashboard views
+model DashboardAggregate {
+  id                String   @id @default(uuid()) @db.Uuid
+  scope             String   @unique
+  watermark         DateTime @map("watermark")
+  totalValueLocked  String   @map("total_value_locked")
+  totalPrizePool    String   @map("total_prize_pool")
+  winDistribution   Json     @map("win_distribution")
+  depositCount      Int      @map("deposit_count")
+  depositTotal      String   @map("deposit_total")
+  computedAt        DateTime @map("computed_at")
+
+  @@map("dashboard_aggregates")
+}
+
+// Historical trend aggregation for maintainer analytics
+model TrendAggregate {
+  id                String   @id @default(uuid()) @db.Uuid
+  metricName        String   @map("metric_name")
+  window            String   // "hour", "day", "week", "month"
+  windowStart       DateTime @map("window_start")
+  windowEnd         DateTime @map("window_end")
+  value             Float
+  count             Int      @default(0)
+  metadata          Json?    @map("metadata")
+  schemaVersion     Int      @default(1) @map("schema_version")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@unique([metricName, window, windowStart])
+  @@index([metricName, windowStart(sort: Desc)])
+  @@index([windowStart, windowEnd])
+  @@map("trend_aggregates")
+}
+
+// #VaultQuest — derived/cached records that mirror source-of-truth data
+// (vault accounting, prize draws, wallet flows, dashboards, reporting).
+// `sourceVersion` is a monotonic counter bumped whenever the source record
+// changes; `sourceUpdatedAt` is the source row's updatedAt at cache time.
+// A cache entry is stale when either drifts from the current source, or
+// when `expiresAt` has passed. `repairJobId` links to the repair job that
+// last rebuilt this entry, so a repair job can be re-run idempotently.
+model DerivedCache {
+  id              String    @id @default(uuid()) @db.Uuid
+  cacheKey        String    @unique @map("cache_key")
+  cacheType       String    @map("cache_type")
+  sourceType      String    @map("source_type")
+  sourceId        String    @map("source_id")
+  sourceVersion   BigInt    @map("source_version")
+  sourceUpdatedAt DateTime  @map("source_updated_at") @db.Timestamptz
+  payload         Json
+  computedAt      DateTime  @default(now()) @map("computed_at") @db.Timestamptz
+  expiresAt       DateTime? @map("expires_at") @db.Timestamptz
+  staleAt         DateTime? @map("stale_at") @db.Timestamptz
+  staleReason     String?   @map("stale_reason")
+  repairJobId     String?   @map("repair_job_id") @db.Uuid
+  repairAttempts  Int       @default(0) @map("repair_attempts")
+  lastRepairError String?   @map("last_repair_error")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([cacheType, staleAt])
+  @@index([sourceType, sourceId])
+  @@index([expiresAt])
+  @@map("derived_cache")
+}
+
+// #VaultQuest — append-only log of stale-cache detection and repair runs.
+// `dryRun` distinguishes detection-only scans from applied repairs so the
+// repair job's dry-run output is auditable without mutating DerivedCache.
+model CacheRepairRun {
+  id             String    @id @default(uuid()) @db.Uuid
+  jobName        String    @map("job_name")
+  dryRun         Boolean   @default(true) @map("dry_run")
+  detectedCount  Int       @default(0) @map("detected_count")
+  repairedCount  Int       @default(0) @map("repaired_count")
+  failedCount    Int       @default(0) @map("failed_count")
+  planJson       Json      @map("plan_json")
+  appliedJson    Json?     @map("applied_json")
+  errorDetail    String?   @map("error_detail")
+  startedAt      DateTime  @default(now()) @map("started_at") @db.Timestamptz
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz
+
+  @@index([jobName, startedAt(sort: Desc)])
+  @@index([dryRun, startedAt(sort: Desc)])
+  @@map("cache_repair_runs")
 }
