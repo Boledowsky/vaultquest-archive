@@ -33,6 +33,7 @@ export interface IndexerCheckpoint {
   id?: string;
   latestLedger: number;
   lastProcessedEventId?: string | null;
+  indexerVersion?: string | null;
   lastSyncTime: Date;
   lastSuccessSyncTime?: Date;
   lastError?: string | null;
@@ -211,6 +212,7 @@ export class CacheService {
   async setCheckpoint(checkpoint: {
     latestLedger: number;
     lastProcessedEventId: string | null;
+    indexerVersion?: string | null;
     lastSyncTime: Date;
     lastSuccessSyncTime: Date;
     lastError: string | null;
@@ -223,6 +225,7 @@ export class CacheService {
           JSON.stringify({
             latestLedger: checkpoint.latestLedger,
             lastProcessedEventId: checkpoint.lastProcessedEventId,
+            indexerVersion: checkpoint.indexerVersion ?? null,
             lastSyncTime: checkpoint.lastSyncTime.toISOString(),
             lastSuccessSyncTime: checkpoint.lastSuccessSyncTime.toISOString(),
             lastError: checkpoint.lastError,
@@ -243,6 +246,7 @@ export class CacheService {
         id: "singleton",
         latestLedger: checkpoint.latestLedger,
         lastProcessedEventId: checkpoint.lastProcessedEventId,
+        indexerVersion: checkpoint.indexerVersion ?? null,
         lastSyncTime: checkpoint.lastSyncTime,
         lastError: checkpoint.lastError,
         lastSuccessSyncTime: checkpoint.lastSuccessSyncTime,
@@ -251,6 +255,7 @@ export class CacheService {
       update: {
         latestLedger: checkpoint.latestLedger,
         lastProcessedEventId: checkpoint.lastProcessedEventId,
+        indexerVersion: checkpoint.indexerVersion ?? null,
         lastSyncTime: checkpoint.lastSyncTime,
         lastError: checkpoint.lastError,
         lastSuccessSyncTime: checkpoint.lastSuccessSyncTime,
