@@ -110,6 +110,14 @@ fn setup_with_token() -> (
 /// the randomness flow. With a single depositor, the winning ticket always
 /// falls in their sole segment, so the winner is deterministically
 /// `depositor`.
+///
+/// Seeds a second admin first (#657): `open_round` now refuses to open with
+/// fewer than `Threshold` (2 by default) approved admins, since a single
+/// committer gives `commit_round_randomness`'s N-of-N scheme no real
+/// manipulation resistance — this helper's own single-committer reveal
+/// below is deliberately only a *liveness* test of the commit/reveal
+/// mechanics, not a claim that single-committer is a safe way to run a
+/// round in production.
 fn setup_round_with_winner(
     env: &Env,
     client: &DripPoolClient,
@@ -117,6 +125,9 @@ fn setup_round_with_winner(
     depositor: &Address,
     amount: i128,
 ) -> u32 {
+    let second_admin = Address::generate(env);
+    client.seed_admin(admin, &second_admin);
+
     let round_id = client.open_round(admin);
     client.round_deposit(depositor, &round_id, &amount);
 
@@ -432,6 +443,7 @@ fn draw_winner_unauthorized_fails() {
 #[test]
 fn draw_winner_without_selected_round_winner_fails() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     client.create(&admin);
     let round_id = client.open_round(&admin);
     assert_eq!(
@@ -753,6 +765,7 @@ fn renew_instance_not_initialized_fails() {
 #[test]
 fn renew_storage_is_bounded_and_reports_blocking_key() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     let alice = Address::generate(&env);
     let ghost = Address::generate(&env);
     client.join(&alice);
@@ -2149,6 +2162,7 @@ fn deterministic_solvency_model_conserves_principal_yield_and_reserves() {
 #[test]
 fn open_round_starts_empty_and_open() {
     let (_env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&_env)); // #657: round-open requires >= Threshold admins
 
     let round_id = client.open_round(&admin);
     assert_eq!(round_id, 0);
@@ -2176,9 +2190,109 @@ fn open_round_unauthorized_fails() {
     );
 }
 
+// ── #657: randomness source configuration is validated before a round opens ──
+
+#[test]
+fn open_round_fails_with_missing_randomness_config() {
+    // Freshly created pool: exactly one admin (the deployer), below the
+    // 2-admin floor commit-reveal needs for any real manipulation
+    // resistance. `open_round` must refuse rather than silently accept
+    // deposits into a round with no real randomness guarantee.
+    let (_env, client, admin) = setup();
+    assert_eq!(
+        client.try_open_round(&admin),
+        Err(Ok(Error::UnsafeRandomnessConfig))
+    );
+}
+
+#[test]
+fn open_round_fails_with_unavailable_randomness_config_after_admin_removed() {
+    // "Unavailable" in the sense the issue means it: a configuration that
+    // was once sufficient becomes unsafe later. Open one round safely with
+    // 2 admins, then walk the config down to a single admin through two
+    // legitimate governance actions each already permitted on their own:
+    //   1. SetThreshold(1) - allowed; governance threshold is independent
+    //      of randomness safety and may legitimately be lowered for other
+    //      reasons (e.g. simplifying emergency response).
+    //   2. RemoveAdmin(second_admin) - allowed once threshold is 1, since
+    //      RemoveAdmin's own liveness guard only blocks dropping admins
+    //      below the *current* threshold (lib.rs: `admins.len() <= threshold`),
+    //      not below any randomness-specific floor.
+    // Neither step alone is a randomness-config bug - RemoveAdmin's guard
+    // is doing exactly its documented job. The point of this test is that
+    // require_randomness_config_safe's own `threshold.max(2)` floor must
+    // still catch the result: a single-admin pool, regardless of how it
+    // legitimately got there.
+    let (env, client, admin) = setup();
+    let second_admin = Address::generate(&env);
+    client.seed_admin(&admin, &second_admin);
+
+    // Sanity: 2 admins, default threshold 2 - this round is allowed.
+    let round_id = client.open_round(&admin);
+    assert_eq!(round_id, 0);
+
+    let set_threshold_pid = client.propose(&admin, &ProposalAction::SetThreshold(1));
+    client.approve(&second_admin, &set_threshold_pid);
+    skip_high_risk_delay(&env);
+    client.execute_proposal(&admin, &set_threshold_pid);
+    assert_eq!(client.threshold(), 1);
+
+    let remove_admin_pid = client.propose(&admin, &ProposalAction::RemoveAdmin(second_admin.clone()));
+    // threshold_snapshot for this proposal is 1 (taken at propose time,
+    // after SetThreshold already executed), so admin's own auto-approval
+    // already meets it - no second approve() call needed, only the delay.
+    skip_high_risk_delay(&env);
+    client.execute_proposal(&admin, &remove_admin_pid);
+    assert_eq!(client.admins().len(), 1);
+
+    // Config that was safe when round_id opened is no longer safe: only
+    // one admin remains, so open_round must refuse the next round.
+    assert_eq!(
+        client.try_open_round(&admin),
+        Err(Ok(Error::UnsafeRandomnessConfig))
+    );
+}
+
+#[test]
+fn open_round_succeeds_with_valid_randomness_config() {
+    // The straightforward positive case: once seeded to the default
+    // 2-admin threshold, open_round succeeds exactly as it did before #657
+    // for every other acceptance criterion.
+    let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env));
+
+    let round_id = client.open_round(&admin);
+    assert_eq!(round_id, 0);
+    assert_eq!(client.round(&round_id).status, RoundStatus::Open);
+}
+
+#[test]
+fn require_randomness_config_safe_floor_is_independent_of_a_lowered_threshold() {
+    // Threshold can legitimately be governed down to 1 (SetThreshold only
+    // rejects t == 0 or t > admins.len(), see lib.rs) for reasons unrelated
+    // to randomness - e.g. an operator deliberately simplifying emergency
+    // response multisig requirements. That must not silently also lower the
+    // randomness-safety floor: open_round still requires >= 2 real admins
+    // even when the governance threshold itself has been set to 1.
+    let (env, client, admin) = setup();
+    let second_admin = Address::generate(&env);
+    client.seed_admin(&admin, &second_admin);
+
+    let prop_id = client.propose(&admin, &ProposalAction::SetThreshold(1));
+    client.approve(&second_admin, &prop_id);
+    skip_high_risk_delay(&env);
+    client.execute_proposal(&admin, &prop_id);
+    assert_eq!(client.threshold(), 1);
+
+    // Still 2 real admins, so this is still safe and must succeed.
+    let round_id = client.open_round(&admin);
+    assert_eq!(round_id, 0);
+}
+
 #[test]
 fn round_deposit_accumulates_into_snapshot() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     let round_id = client.open_round(&admin);
 
     let alice = Address::generate(&env);
@@ -2196,6 +2310,7 @@ fn round_deposit_accumulates_into_snapshot() {
 #[test]
 fn round_deposit_zero_or_negative_rejected() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     let round_id = client.open_round(&admin);
     let alice = Address::generate(&env);
 
@@ -2225,6 +2340,7 @@ fn deposits_before_vs_after_lock_go_to_correct_rounds() {
     // counted in the already-locked round's snapshot — it must land in the
     // next round instead.
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let round_0 = client.open_round(&admin);
     let alice = Address::generate(&env);
@@ -2257,6 +2373,7 @@ fn deposits_before_vs_after_lock_go_to_correct_rounds() {
 #[test]
 fn lock_round_requires_open_status() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     let round_id = client.open_round(&admin);
     client.lock_round(&admin, &round_id);
 
@@ -2270,6 +2387,7 @@ fn lock_round_requires_open_status() {
 #[test]
 fn lock_round_unauthorized_fails() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     let round_id = client.open_round(&admin);
     let stranger = Address::generate(&env);
     assert_eq!(
@@ -2281,6 +2399,7 @@ fn lock_round_unauthorized_fails() {
 #[test]
 fn settle_round_requires_locked_status() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     let round_id = client.open_round(&admin);
 
     // Can't settle an Open round — must be Locked first.
@@ -2293,6 +2412,7 @@ fn settle_round_requires_locked_status() {
 #[test]
 fn settle_round_twice_fails() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     let round_id = client.open_round(&admin);
     client.lock_round(&admin, &round_id);
     client.settle_round(&admin, &round_id, &100, &0);
@@ -2308,6 +2428,7 @@ fn settle_round_twice_fails() {
 #[test]
 fn permissionless_finalize_round_after_deadline_is_idempotent() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     let keeper = Address::generate(&env);
     let alice = Address::generate(&env);
 
@@ -2340,6 +2461,7 @@ fn permissionless_finalize_round_after_deadline_is_idempotent() {
 fn settling_round_does_not_affect_next_rounds_opening_balance() {
     // "settling a round doesn't affect the next round's opening balance"
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let round_0 = client.open_round(&admin);
     let alice = Address::generate(&env);
@@ -2368,6 +2490,7 @@ fn round_claim_pays_pro_rata_share_and_is_isolated_per_round() {
     // with different yield outcomes — round N's payout must never bleed
     // into round N+1's, and vice versa.
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -2404,6 +2527,7 @@ fn round_claim_pays_pro_rata_share_and_is_isolated_per_round() {
 #[test]
 fn round_claim_before_settlement_fails() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     let round_id = client.open_round(&admin);
     let alice = Address::generate(&env);
     client.round_deposit(&alice, &round_id, &100);
@@ -2424,6 +2548,7 @@ fn round_claim_before_settlement_fails() {
 #[test]
 fn round_claim_with_no_deposit_returns_zero() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     let round_id = client.open_round(&admin);
     client.lock_round(&admin, &round_id);
     client.settle_round(&admin, &round_id, &100, &0);
@@ -2438,6 +2563,7 @@ fn round_claim_rounding_never_over_distributes() {
     // distributed shares must never exceed the settled total (dust is left
     // unclaimed rather than dropped incorrectly or over-paid).
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let round_id = client.open_round(&admin);
     let alice = Address::generate(&env);
@@ -2465,6 +2591,7 @@ fn full_round_lifecycle_two_overlapping_rounds() {
     // End-to-end: round 0 is locked and settled while round 1 is opened and
     // collects deposits concurrently — asserts full isolation both ways.
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -2892,6 +3019,7 @@ fn test_post_upgrade_smoke_tests_execution() {
 #[test]
 fn test_populated_state_upgrade_rehearsal() {
     let (env, client, admin, token, issuer) = setup_with_token();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     // Seed populated state with multiple participants & balances
     let p1 = Address::generate(&env);
@@ -3608,6 +3736,7 @@ fn test_admin_epoch_change_does_not_invalidate_pending_rotation() {
 #[test]
 fn test_prune_round_removes_entries() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -3638,6 +3767,7 @@ fn test_prune_round_removes_entries() {
 #[test]
 fn test_prune_round_rejects_outstanding_deposits() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let alice = Address::generate(&env);
 
@@ -3660,6 +3790,7 @@ fn test_prune_round_rejects_outstanding_deposits() {
 #[test]
 fn test_prune_round_rejects_non_settled() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let round_id = client.open_round(&admin);
     let participants = vec![&env];
@@ -3675,6 +3806,7 @@ fn test_prune_round_rejects_non_settled() {
 #[test]
 fn test_prune_round_unauthorized() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
 
     let alice = Address::generate(&env);
     let round_id = client.open_round(&admin);
@@ -3941,6 +4073,7 @@ fn emergency_recall_succeeds_while_adapter_deposit_is_paused() {
 #[test]
 fn test_ticket_weighting_single_depositor_always_wins() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     client.create(&admin);
 
     let alice = Address::generate(&env);
@@ -3963,6 +4096,7 @@ fn test_ticket_weighting_single_depositor_always_wins() {
 #[test]
 fn test_ticket_weighting_zero_weight_cannot_win() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     client.create(&admin);
 
     let alice = Address::generate(&env);
@@ -3989,6 +4123,7 @@ fn test_ticket_weighting_zero_weight_cannot_win() {
 #[test]
 fn test_ticket_weighting_multi_depositor_canonical_partition() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     client.create(&admin);
 
     let alice = Address::generate(&env);
@@ -4021,6 +4156,7 @@ fn test_ticket_weighting_multi_depositor_canonical_partition() {
 #[test]
 fn test_ticket_weighting_rejects_out_of_order_candidates() {
     let (env, client, admin) = setup();
+    client.seed_admin(&admin, &Address::generate(&env)); // #657: round-open requires >= Threshold admins
     client.create(&admin);
 
     let alice = Address::generate(&env);
