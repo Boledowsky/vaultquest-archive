@@ -18,7 +18,7 @@ permissions, or user access**.
 | `user_quest` | Prize eligibility and claim rights |
 | `reward_grant` | Value handed out |
 | `pool_registry` | Pool configuration and ownership |
-| `invitation` | Role/permission grants (see [INVITATIONS.md](INVITATIONS.md)) |
+| `invitation` | Role/permission grants (see [RBAC.md](RBAC.md)) |
 | `escrow` | Held funds and dispute state |
 
 ## Chain shape

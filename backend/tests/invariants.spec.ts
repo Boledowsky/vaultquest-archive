@@ -348,11 +348,11 @@ describe("CONC invitation acceptance is a compare-and-swap", () => {
     const legit = service.accept({ token, inviteeId: "G_INVITEE" });
     const results = await Promise.allSettled([attacker, legit]);
 
-    expect(results[0].status).toBe(rejected);
+    expect(results[0].status).toBe("rejected");
     expect((results[0] as PromiseRejectedResult).reason).toMatchObject({
-      code: "WRONG_INVITEEE,
+      code: "WRONG_INVITEE",
     });
-    expect(results[1].status).toBe(fulfilled);
+    expect(results[1].status).toBe("fulfilled");
     expect((await service.get(invitation.id))?.state).toBe("ACCEPTED");
   });
 
@@ -415,7 +415,7 @@ describe("CONC change history appends never double-write", () => {
     return {
       store,
       service: new ChangeHistoryService(store, {
-        now: () => new Date(1 700 000 000 000 + n++ * 1),
+        now: () => new Date(1_700_000_000_000 + n++ * 1),
         idFactory: () => `chg_${n}`,
       }),
     };
