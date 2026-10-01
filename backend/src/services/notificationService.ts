@@ -19,6 +19,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { IdempotencyService } from "./idempotencyService.js";
 
 export type ReminderType = "maturity" | "claim_window";
 
@@ -107,7 +108,8 @@ export function sanitizeDeliveryError(message: string): string {
 export class NotificationService {
   constructor(
     private readonly prisma: PrismaClient,
-    private readonly leadHours = 24,
+private readonly leadHours = 24,
+    private readonly idempotencyService?: IdempotencyService,
     private readonly delivery: NotificationDeliveryAdapter | null = null,
     private readonly maxDeliveryAttempts = DEFAULT_MAX_DELIVER_ATTEMPTS
   ) {}
@@ -167,7 +169,7 @@ export class NotificationService {
     return created;
   }
 
-  /**
+/**
    * Creates a notification if no row with the same idempotency key exists.
    * The key is derived from the source event, so duplicate events and
    * repeated workers are naturally deduplicated. When a delivery adapter is
@@ -182,10 +184,35 @@ export class NotificationService {
       title: string;
       message: string;
     },
+    idempotencyKey?: string
+  ): Promise<number> {
+    // Use idempotency if key is provided
+    if (idempotencyKey && this.idempotencyService) {
+      const result = await this.idempotencyService.executeWithIdempotency(
+        {
+          key: idempotencyKey,
+          operationType: "notification",
+          walletAddress: input.walletAddress,
+        },
+        async () => this.createIfMissingImpl(input)
+      );
+      return result as unknown as number;
+    }
+
+    return this.createIfMissingImpl(input);
+  }
+
+  private async createIfMissingImpl(
+    input: {
+      walletAddress: string;
+      positionId: string;
+      type: ReminderType;
+      title: string;
+      message: string;
+    },
     now: Date
   ): Promise<number> {
     const idempotencyKey = notificationIdempotencyKey(input);
-
     const existing = await this.prisma.notification.findUnique({
       where: { idempotencyKey }
     });
