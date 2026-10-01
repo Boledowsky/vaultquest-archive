@@ -73,7 +73,7 @@ Exit code is `0` when every check passes and non-zero when any check fails, so i
 | POST | /internal/reconcile | Event indexer → ledger (requires `X-Internal-Secret`) |
 | POST | /internal/imports/dry-run | Validate a bulk import without writing; report create/update/skip/duplicate/error counts and conflicts |
 
-See `docs/superpowers/specs/2026-04-23-action-ledger-design.md` for the full contract, and [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for the service layout, schema, worker runtime, and migration strategy. For background drift detection, automated repair pipelines, and quarantine incident response, see [`docs/RECONCILIATION.md`](../docs/RECONCILIATION.md). For response envelopes, errors, and pagination, see [`docs/API_RESPONSES.md`](../docs/API_RESPONSES.md). For how the frontend should submit, poll, and **retry** these endpoints safely, see [`docs/transaction-status-api.md`](../docs/transaction-status-api.md). Indexer contributors should also follow the contract [`event schema`](../contracts/docs/EVENT_SCHEMA.md) and [`pause/recovery model`](../contracts/docs/PAUSE_RECOVERY.md). For how confirmations become quest completions and reward grants (idempotency, reorg correction, and the current payout state), see [`docs/QUEST_REWARDS.md`](../docs/QUEST_REWARDS.md).
+See `docs/superpowers/specs/2026-04-23-action-ledger-design.md` for the full contract, and [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for the service layout, schema, worker runtime, and migration strategy. For background drift detection, automated repair pipelines, and quarantine incident response, see [`docs/RECONCILIATION.md`](../docs/RECONCILIATION.md). For response envelopes, errors, and pagination, see [`docs/API_RESPONSES.md`](docs/API_RESPONSES.md). For how the frontend should submit, poll, and **retry** these endpoints safely, see [`docs/transaction-status-api.md`](docs/transaction-status-api.md). Indexer contributors should also follow the contract [`event schema`](../contracts/docs/EVENT_SCHEMA.md) and [`pause/recovery model`](../contracts/docs/PAUSE_RECOVERY.md). For how confirmations become quest completions and reward grants (idempotency, reorg correction, and the current payout state), see [`docs/QUEST_REWARDS.md`](../docs/QUEST_REWARDS.md).
 
 ## Environment
 
@@ -145,7 +145,7 @@ Validation rules (enforced by `Zod` in `src/imports/dryRun.ts`):
 - Rows that match an existing ledger entry are reported as `update` or `skip` depending on whether the amount differs.
 - Rows that collide with a pending action for the same wallet and pool are reported as `conflicts` with a code and human-readable message.
 
-Conflict and error entries never echo column values other than the wallet address and pool identifier, and never include tokens, secrets or signed payloads. See [`docs/IMPORTS.md`](docs/IMPORTS.md) for the complete field reference and example responses.
+Conflict and error entries never echo column values other than the wallet address and pool identifier, and never include tokens, secrets or signed payloads. See [`docs/API.md`](../docs/API.md) for the complete field reference and example responses.
 
 ## Tests
 
