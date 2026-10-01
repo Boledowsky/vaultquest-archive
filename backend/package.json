@@ -16,6 +16,8 @@
     "indexer:backfill": "tsx src/scripts/backfill.ts",
     "reconcile:dry-run": "tsx src/scripts/reconcile.ts --dry-run",
     "dr:drill": "tsx src/scripts/drDrill.ts",
+    "diagnostics": "tsx src/scripts/diagnostics.ts",
+    "diagnostics:json": "tsx src/scripts/diagnostics.ts --json",
     "db:validate-restore": "tsx src/scripts/validateRestore.ts",
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
     "test": "vitest run",

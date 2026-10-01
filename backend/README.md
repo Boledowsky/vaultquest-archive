@@ -172,3 +172,16 @@ workflow. Escalate unresolved payout, settlement, or chain-event mismatches to
 the protocol maintainer before resuming user-facing operations. This is a
 consistency check, not a replacement for the chain-aware disaster-recovery
 drill.
+
+# Privacy-preserving maintainer analytics
+
+The authenticated internal endpoint `/internal/analytics/summary` returns a
+30-day aggregate of action type/status, settlement state, reward status,
+background-job status, and distinct participant count. The lookback is bounded to 1–90 days at the
+service boundary. It is computed on demand in a repeatable-read, read-only
+transaction; no analytics events or identifiers are persisted. Raw wallet
+addresses, transaction hashes, emails, and payloads are never selected into
+the response. Distinct-participant counts below five are suppressed. The
+window is the retention policy: only source records created in that interval
+contribute to the response. Access requires the internal service secret and
+the dedicated internal analytics-read permission.

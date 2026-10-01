@@ -475,84 +475,105 @@ model OutboundAction {
   @@map("outbound_actions")
 }
 
-// #814 — append-only, hash-chained audit trail. UPDATE/DELETE/TRUNCATE are
-// rejected by a trigger (see migration 20260929000000); see services/auditTrail.ts.
-model AuditTrailRecord {
-  id             String   @id @db.Uuid
-  sequence       Int      @unique
-  category       String
-  action         String
-  actorSubject   String   @map("actor_subject")
-  actorRole      String   @map("actor_role")
-  targetType     String   @map("target_type")
-  targetId       String   @map("target_id")
-  reason         String?
-  before         Json?
-  after          Json?
-  metadata       Json?
-  redactedFields String[] @default([]) @map("redacted_fields")
-  occurredAt     DateTime @map("occurred_at") @db.Timestamptz(3)
-  prevHash       String   @map("prev_hash")
-  recordHash     String   @map("record_hash")
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+// #750 — dashboard aggregates for transactionally-consistent dashboard views
+model DashboardAggregate {
+  id                String   @id @default(uuid()) @db.Uuid
+  scope             String   @unique
+  watermark         DateTime @map("watermark")
+  totalValueLocked  String   @map("total_value_locked")
+  totalPrizePool    String   @map("total_prize_pool")
+  winDistribution   Json     @map("win_distribution")
+  depositCount      Int      @map("deposit_count")
+  depositTotal      String   @map("deposit_total")
+  computedAt        DateTime @map("computed_at")
 
-  @@index([category, sequence(sort: Desc)])
-  @@index([actorSubject, sequence(sort: Desc)])
-  @@index([targetType, targetId, sequence(sort: Desc)])
-  @@map("audit_trail")
+  @@map("dashboard_aggregates")
 }
 
-// #812 — one signed receipt per (action, stage); see services/receipts.ts.
-model ActionReceipt {
-  receiptId String   @id @map("receipt_id")
-  actionId  String   @map("action_id") @db.Uuid
-  stage     String
-  payload   Json
-  algorithm String
-  keyId     String   @map("key_id")
-  signature String
-  issuedAt  DateTime @default(now()) @map("issued_at") @db.Timestamptz(3)
+// Historical trend aggregation for maintainer analytics
+model TrendAggregate {
+  id                String   @id @default(uuid()) @db.Uuid
+  metricName        String   @map("metric_name")
+  window            String   // "hour", "day", "week", "month"
+  windowStart       DateTime @map("window_start")
+  windowEnd         DateTime @map("window_end")
+  value             Float
+  count             Int      @default(0)
+  metadata          Json?    @map("metadata")
+  schemaVersion     Int      @default(1) @map("schema_version")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
-  @@unique([actionId, stage])
-  @@index([actionId])
-  @@map("action_receipts")
+  @@unique([metricName, window, windowStart])
+  @@index([metricName, windowStart(sort: Desc)])
+  @@index([windowStart, windowEnd])
+  @@map("trend_aggregates")
 }
 
-// #813 — recovery case for a stuck pending action; see services/pendingRecovery.ts.
-model RecoveryCase {
-  id            String    @id
-  actionId      String    @unique @map("action_id") @db.Uuid
-  walletAddress String    @map("wallet_address")
-  actionType    String    @map("action_type")
-  state         String
-  attempts      Int       @default(0)
-  maxAttempts   Int       @map("max_attempts")
-  staleSince    DateTime  @map("stale_since") @db.Timestamptz(3)
-  detectedAt    DateTime  @map("detected_at") @db.Timestamptz(3)
-  lastAttemptAt DateTime? @map("last_attempt_at") @db.Timestamptz(3)
-  lastError     String?   @map("last_error")
-  resolution    Json?
-  version       Int       @default(1)
-  updatedAt     DateTime  @map("updated_at") @db.Timestamptz(3)
+// Idempotency keys for replay protection on high-risk write operations
+model IdempotencyKey {
+  id             String   @id @default(uuid()) @db.Uuid
+  key            String   @unique
+  operationType  String   @map("operation_type")
+  walletAddress  String?  @map("wallet_address")
+  status         String   @default("pending") // "pending", "completed", "failed", "expired"
+  response       Json?    @map("response")
+  errorCode      String?  @map("error_code")
+  errorDetail    String?  @map("error_detail")
+  expiresAt      DateTime @map("expires_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
-  @@index([state, staleSince])
-  @@index([walletAddress])
-  @@map("recovery_cases")
+  @@index([walletAddress, expiresAt])
+  @@index([expiresAt])
+  @@index([operationType, expiresAt])
+  @@map("idempotency_keys")
 }
 
-// #815 — scoped, expiring override of an operation limit; see services/operationLimits.ts.
-model LimitOverride {
-  id         String    @id @db.Uuid
-  operation  String
-  scopeKey   String    @map("scope_key")
-  limitValue Int       @map("limit_value")
-  reason     String
-  grantedBy  String    @map("granted_by")
-  createdAt  DateTime  @map("created_at") @db.Timestamptz(3)
-  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
-  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
-  revokedBy  String?   @map("revoked_by")
+// #791 — scoped, time-limited maintainer impersonation sessions.
+model ImpersonationSession {
+  id                  String    @id @default(uuid()) @db.Uuid
+  maintainerSubject   String    @map("maintainer_subject")
+  targetWallet        String    @map("target_wallet")
+  reason              String
+  allowMutations      Boolean   @default(false) @map("allow_mutations")
+  state               String    @default("active") // active | expired | ended
+  startedAt           DateTime  @default(now()) @map("started_at") @db.Timestamptz
+  expiresAt           DateTime  @map("expires_at") @db.Timestamptz
+  endedAt             DateTime? @map("ended_at") @db.Timestamptz
 
-  @@index([operation, scopeKey, expiresAt])
-  @@map("limit_overrides")
+  @@index([maintainerSubject, state])
+  @@index([expiresAt])
+  @@map("impersonation_sessions")
 }
+
+// #793 — partial failure tracking for background and external integrations.
+// Records operations that completed partially: one side succeeded but the
+// other (external system, on-chain confirmation, email, etc.) did not.
+model PartialFailure {
+  id              String    @id @default(uuid()) @db.Uuid
+  operationType   String    @map("operation_type")   // "background_job" | "external_call" | "on_chain" | "wallet_flow"
+  operationId     String    @map("operation_id")     // e.g. actionId, jobId, txHash
+  externalRef     String?   @map("external_ref")     // external system reference (no secrets)
+  severity        String    @default("medium")       // "low" | "medium" | "high" | "critical"
+  state           String    @default("unresolved")   // "unresolved" | "retryable" | "resolved" | "ignored"
+  retryable       Boolean   @default(false)
+  description     String                             // human-readable summary (no secrets)
+  metadata        Json?                              // sanitized context for investigation
+  detectedAt      DateTime  @default(now()) @map("detected_at") @db.Timestamptz
+  staleSinceAt    DateTime? @map("stale_since_at") @db.Timestamptz
+  lastRetriedAt   DateTime? @map("last_retried_at") @db.Timestamptz
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz
+  resolvedBy      String?   @map("resolved_by")
+  resolutionNote  String?   @map("resolution_note")
+  ignoredAt       DateTime? @map("ignored_at") @db.Timestamptz
+  ignoredBy       String?   @map("ignored_by")
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([state, detectedAt(sort: Desc)])
+  @@index([operationType, state])
+  @@index([severity, state])
+  @@index([retryable, state])
+  @@map("partial_failures")
+}
+
