@@ -3,16 +3,26 @@ import crypto from "crypto";
 /**
  * Canonical JSON serialization for VaultQuest payloads.
  *
- * Payloads that are hashed, signed, compared, or verified must be
- * serialized deterministically. This module implements RFC 8785-style
- * canonical JSON: object keys are sorted lexicographically by UTF-16
- * code unit, array order is preserved, and numbers are normalized to a
- * single canonical form.
+ * Receipts are signed and audit records are hash-chained, so the bytes that
+ * get signed/hashed must not depend on object key order or on how a value was
+ * built. This module implements RFC 8785-style canonical JSON: object keys are
+ * sorted lexicographically by UTF-16 code unit, array order is preserved, and
+ * numbers are normalized to a single canonical form.
+ *
+ *  - sorts object keys lexicographically at every depth,
+ *  - drops `undefined` object values (JSON has no undefined),
+ *  - renders `Date` as its ISO string and `bigint` as a decimal string,
+ *  - rejects non-finite numbers, functions and symbols instead of silently
+ *    turning them into `null` (a silent change would make a signature verify
+ *    against data that was never signed).
  *
  * The goal is that equivalent payloads (differing only in key order,
  * whitespace, casing of known enum fields, or numeric representation)
  * produce the same canonical output, and that non-canonical inputs
  * are either normalized or rejected consistently.
+ *
+ * It is deliberately independent of `ledger.ts` so signing never depends on
+ * that module loading.
  */
 
 export type CanonicalValue =
@@ -28,7 +38,7 @@ export interface CanonicalizeOptions {
   strict?: boolean;
   /** Optional allowlist of top-level keys to keep. */
   allowedKeys?: readonly string[];
-  /** Optional denedlist of top-level keys to drop. */
+  /** Optional denylist of top-level keys to drop. */
   deniedKeys?: readonly string[];
   /** Maximum depth before throwing. Defaults to 20. */
   maxDepth?: number;
@@ -44,7 +54,7 @@ export class CanonicalizationError extends Error {
 /**
  * Known enum-like fields whose casing is normalized to lower-case.
  * This lets the same logical payload hash equally regardless of
- * whether a caller sent `"USDC"`, `""usdc`"`, or `""USDC""`.
+ * whether a caller sent `"USDC"`, `"usdc"`, or `"Usdc"`.
  */
 const LOWERCASE_ENUM_KEYS: ReadonlySet<string> = new Set([
   "asset",
@@ -124,7 +134,7 @@ function normalizeDecimalString(raw: string): string {
 
   // Reject hex-like or non-numeric strings that could slip through
   // Number() coercion (e.g. "0x10", "123abc").
-  if (!/^[+-]?(\d+(\.\d*)?|\.\d+)([yY][+\-]?\d+)?$/.test(trimmed)) {
+  if (!/^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+\-]?\d+)?$/.test(trimmed)) {
     throw new CanonicalizationError(`malformed numeric string: "${raw}"`);
   }
 
@@ -132,7 +142,11 @@ function normalizeDecimalString(raw: string): string {
   const expanded = expandExponent(trimmed);
 
   const negative = expanded.startsWith("-");
-  const unsigned = negative ? expanded.slice(1) : expanded.startsWith("+") ? expanded.slice(1) : expanded;
+  const unsigned = negative
+    ? expanded.slice(1)
+    : expanded.startsWith("+")
+      ? expanded.slice(1)
+      : expanded;
 
   const dotIdx = unsigned.indexOf(".");
   const intPart = dotIdx === -1 ? unsigned : unsigned.slice(0, dotIdx);
@@ -141,9 +155,10 @@ function normalizeDecimalString(raw: string): string {
   const normalizedInt = intPart.replace(/^0+(?=\d)/, "") || "0";
   const normalizedFrac = fracPart.replace(/0+$/, "");
 
-  const body = normalizedFrac.length > 0
-    ? `${normalizedInt}.${normalizedFrac}`
-    : normalizedInt;
+  const body =
+    normalizedFrac.length > 0
+      ? `${normalizedInt}.${normalizedFrac}`
+      : normalizedInt;
 
   const isZero = /^0(?:\.0*)?$/.test(body);
   if (isZero) {
@@ -154,7 +169,9 @@ function normalizeDecimalString(raw: string): string {
 }
 
 function expandExponent(value: string): string {
-  const match = /^([+-]?)((?:\d+(?:\.\d*)?|\.\d+))(?:[eE]([+-]?\d+))?$/.exec(value);
+  const match = /^([+-]?)((?:\d+(?:\.\d*)?|\.\d+))(?:[eE]([+-]?\d+))?$/.exec(
+    value,
+  );
   if (!match) {
     throw new CanonicalizationError(`malformed numeric string: "${value}"`);
   }
@@ -206,11 +223,17 @@ function canonicalizeValue(
   maxDepth: number,
 ): CanonicalValue {
   if (depth > maxDepth) {
-    throw new CanonicalizationError(`payload exceeds maximum depth of ${maxDepth}`);
+    throw new CanonicalizationError(
+      `payload exceeds maximum depth of ${maxDepth}`,
+    );
   }
 
   if (value === null || value === undefined) {
     return null;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
   }
 
   if (typeof value === "boolean") {
@@ -244,21 +267,26 @@ function canonicalizeValue(
   }
 
   if (Array.isArray(value)) {
-    return value.map((v) => canonicalizeValue(null, v, depth + 1, options, maxDepth));
+    return value.map((v) =>
+      canonicalizeValue(null, v, depth + 1, options, maxDepth),
+    );
   }
 
   if (isPlainObject(value)) {
     const out: Record<string, CanonicalValue> = {};
-    const keys = Object.keys(value)
+    const originalKeys = Object.keys(value).filter(
+      (k) => value[k] !== undefined,
+    );
+    const keys = originalKeys
       .map(normalizeKey)
       .filter((key) => {
         if (options.deniedKeys?.includes(key)) return false;
-        if (options.allowedKeys && !options.allowedKeys.includes(key)) return false;
+        if (options.allowedKeys && !options.allowedKeys.includes(key))
+          return false;
         return true;
       })
       .sort();
 
-    const originalKeys = Object.keys(value);
     const normalizedOriginal = originalKeys.map(normalizeKey);
     const dupes = new Set<string>();
     for (const k of normalizedOriginal) {
@@ -298,7 +326,10 @@ function canonicalizeValue(
  * - Numeric fields are normalized to a canonical decimal representation.
  * - `null` and `undefined` collapse to `null`.
  */
-export function canonicalize(value: unknown, options: CanonicalizeOptions = {}): CanonicalValue {
+export function canonicalize(
+  value: unknown,
+  options: CanonicalizeOptions = {},
+): CanonicalValue {
   const maxDepth = options.maxDepth ?? 20;
   return canonicalizeValue(null, value, 0, options, maxDepth);
 }
@@ -312,6 +343,13 @@ export function canonicalStringify(
   options: CanonicalizeOptions = {},
 ): string {
   return JSON.stringify(canonicalize(value, options));
+}
+
+/**
+ * Backwards-compatible alias for the legacy `canonicalJson` entry point.
+ */
+export function canonicalJson(value: unknown): string {
+  return canonicalStringify(value);
 }
 
 /**
