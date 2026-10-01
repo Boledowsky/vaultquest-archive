@@ -131,7 +131,7 @@ export class DataExportService {
 
     if (sections.includes("actions")) {
       const r = await collect(
-        (cursor, limit) => this.source.listActions({ walletAddress: wallet, cursor, limit }),
+        (cursor, limit) => this.source.listActions( { walletAddress: wallet, cursor, limit }),
         projectAction,
         (row) => row.redactedAt === null || row.redactedAt === undefined, // scrubbed rows are never exported
         max,

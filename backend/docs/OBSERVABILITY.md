@@ -114,9 +114,69 @@ correlation_id = "<error_id>"
 
 Slow or failing operations: `event = "operation" AND (result = "failure" OR latency_ms > 1000)`.
 
+## Operational health report
+
+Maintainers need a concise view of **actionable failures that are still open**.,
+not just a firehose of every event. The health report groups unresolved work into
+categories with a severity level, aggregates recent trends, and attaches the
+identifiers (stable error code, operation, correlation id) an investigator needs.
+
+### Health categories
+
+| Category | Source | What it means |
+|---|---|---|
+| `unresolved_failure` | `vaultquest_operation_failures_total` with no later success for the same operation within the window | An operation failed and was not retried to success. |
+| `stuck_job` | `vaultquest_operations_total{operation="worker.job"}` with no completion in the expected interval | A background job has not reported success within its cadence. |
+| `stale_record` | actions past their reconcilation deadline with no `action.reconcile_event` success | A ledger record is unresolved and needs manual intervention. |
+| `user_impacting` | failures with `actor_type="user"` | A user-facing flow (wallet verification, action create/cancel) failed. |
+
+### Severity levels
+
+| Severity | Trigger |
+|---|---|
+| `critical` | `user_impacting` failures with a rising trend, correlation id present. |
+| `high` | `stuck_job` or `stale_record` aged beyond the deadline. |
+| `medium` | `unresolved_failure` with a flat or falling trend. |
+| `low` | `unresolved_failure` with no user impact and no recent occurrence. |
+
+### Report shape
+
+The report is produced by `services/healthReport.ts` from the current telemetry
+snapshot and the ledger records. It returns one entry per category with counts,
+trend direction, and the identifiers needed to investigate:
+
+```json
+{
+  "generated_at": "2024-06-01T12:00:00.000Z",
+  "window": "1h",
+  "categories": [
+    {
+      "category": "user_impacting",
+      "severity": "critical",
+      "count": 3,
+      "trend": "rising",
+      "operations": ["action.create"],
+      "error_codes": ["NOT_FOUND"],
+      "correlation_ids": ["4f0c…"]
+    }
+  ]
+}
+```
+
+### Redaction
+
+The report inherits the telemetry allow-list: it never includes wallet addresses,
+tx hashes, payloads, or error messages. Only stable error codes, operation names,
+and correlation ids are reported. This is asserted in
+tests/healthReport.spec.ts against the fixtures.
+
 ## Validation
 
 `pnpm --filter backend exec vitest run tests/telemetry.spec.ts` checks that at
 least five core operations emit every required field on success and failure,
 that no wallet address or tx hash appears in events, and that the Prometheus
 series are populated.
+
+`pnpm --filter backend exec vitest run tests/healthReport.spec.ts` checks that the
+health report counts match the underlying fixture records, classifies failures into
+actionable categories with severity levels, and redacts sensitive details.

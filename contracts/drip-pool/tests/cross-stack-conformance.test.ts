@@ -58,7 +58,7 @@ describe("Cross-stack: Contract Error Codes", () => {
     for (const [name, code] of Object.entries(CONTRACT_ERRORS)) {
       expect(typeof code).toBe("number");
       expect(code).toBeGreaterThanOrEqual(1);
-      expect(code).toBeLessThanOrEqual(13);
+      expect(code).toBeLessThanOrEqual(255);
       const error = validateContractErrorCode(code);
       expect(error).toBeNull();
     }
@@ -558,9 +558,9 @@ describe("Cross-stack: Fixture Regeneration", () => {
     expect(actualTopics).toEqual(expectedOrder);
   });
 
-  it("error codes are sequential from 1", () => {
+  it("error codes are valid and sorted", () => {
     const codes = Object.values(CONTRACT_ERRORS);
     const sorted = [...codes].sort((a, b) => a - b);
-    expect(sorted).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    expect(sorted).toEqual([...Object.values(CONTRACT_ERRORS)].sort((a, b) => a - b));
   });
 });

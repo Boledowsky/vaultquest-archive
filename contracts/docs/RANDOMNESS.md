@@ -57,6 +57,21 @@ admin** — as long as at least one committer keeps their seed secret until
 they choose to reveal it. That is the same threshold-honesty assumption
 this contract already relies on for every other multisig action.
 
+### Precondition: enough eligible committers to begin with (#657)
+
+The "at least one committer keeps their seed secret" assumption above is
+only meaningful if there are at least two approved admins in the first
+place — with exactly one, that admin is both the only possible committer
+and the only possible revealer, so they fully control `winning_ticket` with
+no cryptographic protection at all. `open_round` validates this
+(`require_randomness_config_safe`) before a round can open at all: it
+requires at least `Threshold` approved admins (the contract's own existing
+multisig floor, minimum 2) to exist, failing closed with
+`Error::UnsafeRandomnessConfig` otherwise. This is a config-time check, not
+a per-commit one — it does not guarantee every committer for a given round
+actually keeps their seed secret, only that the *scheme itself* has enough
+eligible participants to be meaningful before deposits start flowing in.
+
 ### Liveness: surviving a no-show
 
 If any committer never reveals, step 4 can never see "everyone revealed".

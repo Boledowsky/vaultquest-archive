@@ -261,6 +261,7 @@ pub enum Error {
     RoundDrawAlreadyCommitted = 94, // round_commit_draw called twice for the same round (#718)
     RoundDrawNotSettled = 95,    // round_draw called on a round that isn't Settled (#718)
     RoundDrawWinnerNotInSnapshot = 96, // Merkle proof does not verify for this round's snapshot root (#718)
+    UnsafeRandomnessConfig = 97, // fewer than `Threshold` approved admins exist to commit randomness seeds (#657)
 }
 
 // ── Structs ────────────────────────────────────────────────────────────────
@@ -649,6 +650,37 @@ impl DripPool {
             .unwrap_or(1);
         if version != CONFIG_SCHEMA_VERSION {
             return Err(Error::IncompatibleConfig);
+        }
+        Ok(())
+    }
+
+    /// Fails closed if the contract's randomness-commit configuration
+    /// couldn't actually produce a manipulation-resistant draw (#657).
+    ///
+    /// `commit_round_randomness`'s N-of-N scheme (§ manipulation-resistant
+    /// round-winner randomness, above) is only unbiasable if at least one
+    /// committer keeps their seed secret until reveal — with a single
+    /// eligible committer, that one admin fully controls the seed and the
+    /// scheme provides no more protection than an admin picking the winner
+    /// directly. Reuses the contract's own existing multisig floor
+    /// (`Threshold`, already >= 2 by `DEFAULT_THRESHOLD`) as the
+    /// randomness-safety floor too, rather than introducing a second,
+    /// unrelated "how many admins is enough" constant: the same
+    /// N-of-N-honest-majority assumption governance already runs on is
+    /// exactly the assumption `commit_round_randomness` needs.
+    ///
+    /// Called from `open_round` so a misconfigured deployment (zero admins
+    /// beyond the deploying account, or a `Threshold` lowered to 1) can
+    /// never silently accept deposits into a round whose eventual draw has
+    /// no real randomness guarantee — better to refuse to open the round at
+    /// all than to let it fall through to `finalize_round_randomness_fallback`
+    /// (a liveness backstop for an honest-but-unresponsive committer, not a
+    /// substitute for having enough committers in the first place) by default.
+    fn require_randomness_config_safe(env: &Env) -> Result<(), Error> {
+        let admins = Self::get_admins(env);
+        let threshold = Self::get_threshold(env);
+        if admins.len() < threshold.max(2) {
+            return Err(Error::UnsafeRandomnessConfig);
         }
         Ok(())
     }
@@ -2690,6 +2722,7 @@ impl DripPool {
         caller.require_auth();
         Self::require_signer(&env, &caller)?;
         Self::require_compatible_config(&env)?;
+        Self::require_randomness_config_safe(&env)?;
 
         let id: u32 = env
             .storage()
