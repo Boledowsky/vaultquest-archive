@@ -1,9 +1,10 @@
 # Background jobs
 
 Delayed and retryable work runs on a small durable job queue instead of inside
-request handlers. Today one operation uses it: **draw-proof generation** after
+request handlers. Today two operations use it: **draw-proof generation** after
 a `select_winner` action is confirmed (previously a fire-and-forget promise
-whose failures were only logged).
+whose failures were only logged) and **notification delivery** for in-app
+reminders.
 
 ## Model
 
@@ -11,9 +12,9 @@ A job is a row in `background_jobs`:
 
 | Field | Meaning |
 |---|---|
-| `type` | Handler name, e.g. `draw_proof.generate`. |
+| `type` | Handler name, e.g. `draw_proof.generate` or `notification.deliver`. |
 | `payload` | JSON input, validated by the handler. |
-| `idempotency_key` | Unique. Enqueueing the same key twice yields one job (`draw_proof.generate:<actionId>`). |
+| `idempotency_key` | Unique. Enqueueing the same key twice yields one job (`draw_proof.generate:<actionId>`, `notification.deliver:<notificationId>`). |
 | `status` | `queued` → `running` → `succeeded`, or `dead` (dead-letter). |
 | `attempts` / `max_attempts` | Attempts are counted when a job is claimed. Default max is 5. |
 | `run_at` | Earliest run time; doubles as the retry schedule. |
@@ -21,15 +22,18 @@ A job is a row in `background_jobs`:
 | `last_error`, `failures` | Every failed attempt: `{ attempt, at, code, message, retryable }`. Messages are length-limited and wallet addresses / tx hashes are redacted. |
 
 Delivery is **at-least-once**, so handlers must be idempotent. The draw-proof
-handler is: it checks for an existing proof before inserting.
+handler is: it checks for an existing proof before inserting. The notification
+delivery handler is idempotent too, because the notification service records
+attempts and will not re-deliver a notification that is already delivered or
+has exhausted its attempt budget.
 
 ## Retry policy
 
 * Exponential backoff: `base 1s × 2^(attempt-1)`, capped at 5 minutes, with
-  jitter in the 50–100% range (`src/worker/retryPolicy.ts`).
+  jritter in the 50–100% range (`src/worker/retryPolicy.ts`).
 * Retried until `max_attempts`, then the job becomes `dead`.
 * **Not retried** (dead immediately): `NonRetryableJobError`, an unknown job
-  type, an invalid payload, or an `AppError` whose taxonomy entry is
+type, an invalid payload, or an `AppError` whose taxonomy entry is
   `retryable: false`.
 
 ## Dead-letter behaviour
@@ -45,7 +49,7 @@ curl -s -X POST -H "x-internal-secret: $INTERNAL_SERVICE_SECRET" \
   "http://localhost:3001/internal/jobs/<id>/retry"
 ```
 
-Endpoints are documented in [`docs/API.md`](../../docs/API.md#internal-background-jobs).
+Endpoints are documented in [`docs/API.md`((____docs/API.md#internal-background-jobs)).
 
 ## Crash safety
 
@@ -71,11 +75,13 @@ pnpm --filter backend dev               # API + worker
 
 Watch it work: log lines `job succeeded`, `job failed; will retry`, and
 `job moved to dead-letter` carry `job_id`, `job_type`, and `correlation_id`;
-`worker.job` telemetry is described in [`OBSERVABILITY.md`](./OBSERVABILITY.md).
+worker.job telemetry is described in [`OBSERVABILITY.md`](./OBSERVABILITY.md).
 
 To process one batch from a script or test without timers:
 
 ```ts
+import { JobWorker } from "../src/worker/worker.js";
+
 const worker = new JobWorker({ queue, handlers });
 await worker.runOnce(); // { claimed, succeeded, retried, dead }
 ```
@@ -87,6 +93,22 @@ await worker.runOnce(); // { claimed, succeeded, retried, dead }
 2. Enqueue with a deterministic `idempotencyKey`:
    `queue.enqueue({ type, payload, idempotencyKey })`.
 3. Add tests using `InMemoryJobStore` (see `tests/worker.spec.ts`).
+
+## Notification delivery
+
+Notifications are deduplicated by a deterministic idempotency key derived from
+the source event (`walletAddress + positionId + type`). Retried events and
+repeated workers therefore cannot create duplicate rows. Each notification
+tracks its delivery status (`pending`, `delivered`, `failed`), attempt count,
+and the last sanitized error.
+
+- Delivery is attempted inline when a reminder is created.
+- Failed deliveries are retried via the `notification.deliver` job type or the
+  `POST /api/notifications/:id/retry` endpoint. Retries are safe: the service
+  will not re-deliver an already-delivered notification and will not exceed
+  `maxDeliveryAttempts`.
+- Exhausted/failed deliveries are surfaced via
+  `GET /api/notifications/diagnostics`.
 
 ## Deployment
 
