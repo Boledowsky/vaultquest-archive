@@ -1265,18 +1265,37 @@ export class LedgerService {
   /**
    * List submitted actions that are eligible for recovery work (no active lease).
    */
-  async listRecoverableActions(limit = 25, offset = 0) {
-    const candidates = await this.prisma.actionLedger.findMany({
+  /**
+   * #778: cursor-based listing of recoverable (submitted, no active lease)
+   * actions.  Ordering on (submittedAt, id) is stable: newly-submitted rows
+   * always appear *after* the current page, so callers never skip or see
+   * duplicate records even when rows are inserted or transition status while
+   * paginating.
+   *
+   * @param limit   - max records per page (default 25)
+   * @param cursor  - id of the last record seen on the previous page
+   */
+  async listRecoverableActions(
+    limit = 25,
+    cursor?: string | null,
+  ): Promise<{ items: Awaited<ReturnType<typeof this["prisma"]["actionLedger"]["findMany"]>>; nextCursor: string | null }> {
+    const rows = await this.prisma.actionLedger.findMany({
       where: { status: "submitted" },
-      orderBy: { submittedAt: "asc" },
-      take: limit,
-      skip: offset
+      orderBy: [{ submittedAt: "asc" }, { id: "asc" }],
+      take: limit + 1,
+      ...(cursor != null ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
 
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+
     const leases = await this.prisma.actionLease.findMany({
-      where: { actionId: { in: candidates.map((c) => c.id) } }
+      where: { actionId: { in: items.map((c) => c.id) } },
     });
     const leased = new Set(leases.map((l) => l.actionId));
-    return candidates.filter((c) => !leased.has(c.id));
+    const filtered = items.filter((c) => !leased.has(c.id));
+
+    const nextCursor = hasMore ? (items[items.length - 1]?.id ?? null) : null;
+    return { items: filtered, nextCursor };
   }
 }

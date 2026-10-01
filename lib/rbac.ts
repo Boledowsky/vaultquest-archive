@@ -30,6 +30,9 @@ export const PERMISSIONS = [
   "admin.audit.export",
   "admin.ledger.verify",
   "admin.export.any",
+  // #791: scoped maintainer impersonation.
+  "admin.impersonation.read",
+  "admin.impersonation.write",
   "internal.reconcile",
   "internal.checkpoint",
   "internal.trace",
@@ -67,6 +70,9 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     "admin.audit_trail.export",
     "admin.limits.read",
     "admin.limits.write",
+    // #791: impersonation — maintainer-only.
+    "admin.impersonation.read",
+    "admin.impersonation.write",
   ],
   service: [
     "internal.reconcile",

@@ -529,3 +529,51 @@ model IdempotencyKey {
   @@index([operationType, expiresAt])
   @@map("idempotency_keys")
 }
+
+// #791 — scoped, time-limited maintainer impersonation sessions.
+model ImpersonationSession {
+  id                  String    @id @default(uuid()) @db.Uuid
+  maintainerSubject   String    @map("maintainer_subject")
+  targetWallet        String    @map("target_wallet")
+  reason              String
+  allowMutations      Boolean   @default(false) @map("allow_mutations")
+  state               String    @default("active") // active | expired | ended
+  startedAt           DateTime  @default(now()) @map("started_at") @db.Timestamptz
+  expiresAt           DateTime  @map("expires_at") @db.Timestamptz
+  endedAt             DateTime? @map("ended_at") @db.Timestamptz
+
+  @@index([maintainerSubject, state])
+  @@index([expiresAt])
+  @@map("impersonation_sessions")
+}
+
+// #793 — partial failure tracking for background and external integrations.
+// Records operations that completed partially: one side succeeded but the
+// other (external system, on-chain confirmation, email, etc.) did not.
+model PartialFailure {
+  id              String    @id @default(uuid()) @db.Uuid
+  operationType   String    @map("operation_type")   // "background_job" | "external_call" | "on_chain" | "wallet_flow"
+  operationId     String    @map("operation_id")     // e.g. actionId, jobId, txHash
+  externalRef     String?   @map("external_ref")     // external system reference (no secrets)
+  severity        String    @default("medium")       // "low" | "medium" | "high" | "critical"
+  state           String    @default("unresolved")   // "unresolved" | "retryable" | "resolved" | "ignored"
+  retryable       Boolean   @default(false)
+  description     String                             // human-readable summary (no secrets)
+  metadata        Json?                              // sanitized context for investigation
+  detectedAt      DateTime  @default(now()) @map("detected_at") @db.Timestamptz
+  staleSinceAt    DateTime? @map("stale_since_at") @db.Timestamptz
+  lastRetriedAt   DateTime? @map("last_retried_at") @db.Timestamptz
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz
+  resolvedBy      String?   @map("resolved_by")
+  resolutionNote  String?   @map("resolution_note")
+  ignoredAt       DateTime? @map("ignored_at") @db.Timestamptz
+  ignoredBy       String?   @map("ignored_by")
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([state, detectedAt(sort: Desc)])
+  @@index([operationType, state])
+  @@index([severity, state])
+  @@index([retryable, state])
+  @@map("partial_failures")
+}
+
