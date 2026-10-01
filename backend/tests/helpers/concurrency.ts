@@ -1,1 +1,179 @@
-LyoqCiAqIENvbmN1cnJlbmN5IHRlc3QgaGVscGVycyAoIzc5MCkuCiAqCiAqIFNtYWxsLCBkZXRlcm1pbmlzdGljIHByaW1pdGl2ZXMgZm9yIGRyaXZpbmcgY29uY3VycmVudCBtdXRhdGlvbiBwYXRocwogKiBpbiB0ZXN0cyB3aXRob3V0IHJlbHlpbmcgb24gcmVhbCB0aW1lcnMgb3Igd2FsbC1jbG9jayBqaXR0ZXIuCiAqCiAqIFRoZSBnb2FsIGlzIHRvIG1ha2UgcmFjZSBjb25kaXRpb25zICpyZXByb2R1Y2libGUqOiBldmVyeSBoZWxwZXIgaGVyZQogKiBlaXRoZXIgZm9yY2VzIGFuIGludGVybGVhdmluZyBvciBydW5zIGEgYmF0Y2ggb2Ygb3BlcmF0aW9ucyB0aGF0IG11c3QKICogcHJlc2VydmUgYSBkb21haW4gaW52YXJpYW50IHJlZ2FyZGxlc3Mgb2Ygb3JkZXIuCiAqLwoKLyoqCiAqIFJ1bnMgYGF0dGVtcHRzYCBjb3BpZXMgb2YgYGZuYCBjb25jdXJyZW50bHkgYW5kIHJldHVybnMgdGhlaXIgc2V0dGxlZAogKiByZXN1bHRzIGluIGlucHV0IG9yZGVyLiBOZXZlciByZWplY3RzIGZvciBhIGZhaWxlZCBjb3B5IOKAlCB0aGUgY2FsbGVyCiAqIGluc3BlY3RzIGBzdGF0dXNgL2ByZWFzb25gIG9uIGVhY2ggcmVzdWx0LgogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIHJ1bkNvbmN1cnJlbnRseTxUPigKICBhdHRlbXB0czogbnVtYmVyLAogIGZuOiAoaW5kZXg6IG51bWJlcikgPT4gUHJvbWlzZTxUPgpQcm9taXNlPFByb21pc2VTZXR0bGVkUmVzdWx0PFQ+W10+IHsKICBjb25zdCB0YXNrcyA9IEFycmF5LmZyb20oeyBsZW5ndGg6IGF0dGVtcHRzIH0sICggXywgaSkgPT4gZm4oaSkpOwogIHJldHVybiBQcm9taXNlLmFsbFNldHRsZWQodGFza3MpOwp9CgovKioKICogQ291bnRzIGhvdyBtYW55IHNldHRsZWQgcmVzdWx0cyBmdWxmaWxsZWQgYSBwcmVkaWNhdGUuIFVzZWZ1bCBmb3IKICogYXNzZXJ0aW5nICJleGFjdGx5IG9uZSB3aW5uZXIiIG9yICJleGFjdGx5IE4gc3VjY2Vzc2VzIiBpbiBhIHJhY2UuCiAqLwpleHBvcnQgZnVuY3Rpb24gY291bnRGdWxmaWxsZWQ8VD4oCiAgcmVzdWx0czogUHJvbWlzZVNldHRsZWRSZXN1bHQ8VD5bXSwKICBwcmVkaWNhdGU6ICh2YWx1ZTogVCkgPT4gYm9vbGVhbiA9ICgpID0+IHRydWUKKTogbnVtYmVyIHsKICByZXR1cm4gcmVzdWx0cy5maWx0ZXIoCiAgICAocikgPT4gci5zdGF0dXMgPT09ICJmdWxmaWxsZWQiICYmIHByZWRpY2F0ZShyLnZhbHVlKQogICku bGVuZ3RoOwp9CgovKioKICogQ29sbGVjdHMgdGhlIHJlamVjdGlvbiByZWFzb25zIGZyb20gYSBzZXR0bGVkIGJhdGNoLCBpbiBpbnB1dCBvcmRlci4KICovCmV4cG9ydCBmdW5jdGlvbiByZWplY3Rpb25zPFQ+KHJlc3VsdHM6IFByb21pc2VTZXR0bGVkUmVzdWx0PFQ+W10pOiB1bmtub3duW10gewogIHJldHVybiByZXN1bHRzCiAgICAuZmlsdGVyKChyKTogciBpcyBQcm9taXNlUmVqZWN0ZWRSZXN1bHQgPT4gci5zdGF0dXMgPT09ICJyZWplY3RlZCIpCiAgICAubWFwKChyKSA9PiByLnJlYXNvbik7Cn0KCi8qKgogKiBBIHNpbmdsZS11c2UgYmFycmllciB0aGF0IGxldHMgdGhlIGNhbGxlciBwYXJrIGEgdGFzayB1bnRpbCBhIGxhdGVyCiAqIHBvaW50IGluIHRoZSB0ZXN0LiBUaGlzIGlzIHRoZSBidWlsZGluZyBibG9jayBmb3IgZGV0ZXJtaW5pc3RpYyByYWNlCiAqIHNpbXVsYXRpb25zOiBpbnN0ZWFkIG9mIGhvcGluZyB0d28gYXN5bmMgb3BlcmF0aW9ucyBpbnRlcmxlYXZlIGJ5CiAqIGx1Y2ssIHRoZSB0ZXN0IGV4cGxpY2l0bHkgY29udHJvbHMgd2hlbiBlYWNoIG9uZSBwcm9jZWVkcy4KICovCmV4cG9ydCBjbGFzcyBCYXJyaWVyIHsKICBwcml2YXRlIHdhaXRlcnM6IEFycmF5PCgpID0+IHZvaWQ+ID0gW107CiAgcHJpdmF0ZSByZWxlYXNlZCA9IGZhbHNlOwoKICAvKiogUmVzb2x2ZXMgb25jZSB0aGUgYmFycmllciBpcyByZWxlYXNlZC4gKi8KICB3YWl0KCk6IFByb21pc2U8dm9pZD4gewogICAgaWYgKHRoaXMucmVsZWFzZWQpIHJldHVybiBQcm9taXNlLnJlc29sdmUoKTsKICAgIHJldHVybiBuZXcgUHJvbWlzZTx2b2lkPigocmVzb2x2ZSkgPT4gewogICAgICB0aGlzLndhaXRlcnMucHVzaChyZXNvbHZlKTsKICAgIH0pOwogIH0KCiAgLyoqIFJlbGVhc2VzIGV2ZXJ5IHdhaXRlciBhbmQgYW55IGZ1dHVyZSB3YWl0ZXJzLiAqLwogIHJlbGVhc2UoKTogdm9pZCB7CiAgICB0aGlzLnJlbGVhc2VkID0gdHJ1ZTsKICAgIGNvbnN0IHdhaXRlcnMgPSB0aGlzLndhaXRlcnM7CiAgICB0aGlzLndhaXRlcnMgPSBbXTsKICAgIGZvciAoY29uc3QgcmVzb2x2ZSBvZiB3YWl0ZXJzKSByZXNvbHZlKCk7CiAgfQoKICAvKiogSG93IG1hbnkgdGFza3MgYXJlIGN1cnJlbnRseSBwYXJrZWQgb24gdGhlIGJhcnJpZXIuICovCiAgZ2V0IHdhaXRpbmdDb3VudCgpOiBudW1iZXIgewogICAgcmV0dXJuIHRoaXMud2FpdGVycy5sZW5ndGg7CiAgfQp9CgovKioKICogQSBjb3VudGVyIHRoYXQgY2FuIGJlIGFkdmFuY2VkIGFuZCBhd2FpdGVkIG9uLiBVc2VkIHRvIGFzc2VydCB0aGF0CiAqIGV2ZXJ5IGNvbmN1cnJlbnQgdGFzayByZWFjaGVkIGEgcGFydGljdWxhciBwaGFzZSBiZWZvcmUgYW55IG9mIHRoZW0KICogcHJvY2VlZGVkIOKAlCB0aGUgY2xhc3NpYyAiYWxsIHJlYWR5LCB0aGVuIGdvIiBwYXR0ZXJuLgogKi8KZXhwb3J0IGNsYXNzIExhdGNoIHsKICBwcml2YXRlIGNvdW50ID0gMDsKICBwcml2YXRlIHRhcmdldDogbnVtYmVyOwogIHByaXZhdGUgcmVzb2x2ZXJzOiBBcnJheTwoKSA9PiB2b2lkPiA9IFtdOwoKICBjb25zdHJ1Y3Rvcih0YXJnZXQ6IG51bWJlcikgewogICAgaWYgKHRhcmdldCA8PSAwKSB0aHJvdyBuZXcgRXJyb3IoIkxhdGNoIHRhcmdldCBtdXN0IGJlIHBvc2l0aXZlIik7CiAgICB0aGlzLnRhcmdldCA9IHRhcmdldDsKICB9CgogIC8qKiBSZWNvcmRzIG9uZSBhcnJpdmFsLiBSZXNvbHZlcyB3YWl0ZXJzIG9uY2UgdGhlIHRhcmdldCBpcyByZWFjaGVkLiAqLwogIGFycml2ZSgpOiB2b2lkIHsKICAgIHRoaXMuY291bnQrKzsKICAgIGlmICh0aGlzLmNvdW50ID49IHRoaXMudGFyZ2V0KSB7CiAgICAgIGNvbnN0IHJlc29sdmVycyA9IHRoaXMucmVzb2x2ZXJzOwogICAgICB0aGlzLnJlc29sdmVycyA9IFtdOwogICAgICBmb3IgKGNvbnN0IHJlc29sdmUgb2YgcmVzb2x2ZXJzKSByZXNvbHZlKCk7CiAgICB9CiAgfQoKICAvKiogUmVzb2x2ZXMgb25jZSBgYXJyaXZlKClgIGhhcyBiZWVuIGNhbGxlZCBgdGFyZ2V0YCB0aW1lcy4gKi8KICB3YWl0KCk6IFByb21pc2U8dm9pZD4gewogICAgaWYgKHRoaXMuY291bnQgPj0gdGhpcy50YXJnZXQpIHJldHVybiBQcm9taXNlLnJlc29sdmUoKTsKICAgIHJldHVybiBuZXcgUHJvbWlzZTx2b2lkPigocmVzb2x2ZSkgPT4gewogICAgICB0aGlzLnJlc29sdmVycy5wdXNoKHJlc29sdmUpOwogICAgfSk7CiAgfQoKICBnZXQgYXJyaXZhbHMoKTogbnVtYmVyIHsKICAgIHJldHVybiB0aGlzLmNvdW50OwogIH0KfQoKLyoqCiAqIEEgZGV0ZXJtaW5pc3RpYyBjbG9jayB0aGF0IG9ubHkgbW92ZXMgd2hlbiB0aGUgdGVzdCBzYXlzIHNvLiBUaGlzCiAqIGxldHMgdGVzdHMgZXhwaXJlIGxlYXNlcyB3aXRob3V0IHNsZWVwaW5nIGFuZCB3aXRob3V0IGFueSByZWFsCiAqIHRpbWUgZGVwZW5kZW5jeSwgd2hpY2ggaXMgd2hhdCBtYWtlcyB0aGUgY29uY3VycmVuY3kgdGVzdHMgcmVsaWFibGUKICogaW4gQ0kuCiAqLwpleHBvcnQgY2xhc3MgRGV0ZXJtaW5pc3RpY0Nsb2NrIHsKICBwcml2YXRlIGN1cnJlbnQ6IG51bWJlcjsKCiAgY29uc3RydWN0b3Ioc3RhcnQ6IG51bWJlciA9IDB8fCBEYXRlLm5vdygpKSB7CiAgICB0aGlzLmN1cnJlbnQgPSBzdGFydDsKICB9CgogIG5vdygpOiBudW1iZXIgewogICAgcmV0dXJuIHRoaXMuY3VycmVudDsKICB9CgogIGRhdGUoKTogRGF0ZSB7CiAgICByZXR1cm4gbmV3IERhdGUodGhpcy5jdXJyZW50KTsKICB9CgogIGFkdmFuY2UobXM6IG51bWJlcik6IHZvaWQgewogICAgaWYgKG1zIDwgMCkgdGhyb3cgbmV3IEVycm9yKCJDYW5ub3QgYWR2YW5jZSBjbG9jayBiYWNrd2FyZHMiKTsKICAgIHRoaXMuY3VycmVudCArPSBtczsKICB9CgogIHNldCh2YWx1ZTogbnVtYmVyKTogdm9pZCB7CiAgICB0aGlzLmN1cnJlbnQgPSB2YWx1ZTsKICB9Cn0KCi8qKgogKiBBIG1pY3JvLXRhc2sgc2NoZWR1bGVyIHRoYXQgeWllbGRzIGJldHdlZW4gY29uY3VycmVudCB0YXNrcyBhdAogKiBleHBsaWNpdCBwb2ludHMuIFRoaXMgbWFrZXMgaXQgcG9zc2libGUgdG8gaW50ZXJsZWF2ZSB0d28gb3BlcmF0aW9ucwogKiB0aGF0IHdvdWxkIG90aGVyd2lzZSBjb21wbGV0ZSBhdG9taWNhbGx5IGluIGEgc2luZ2xlIGF3YWl0IGNoYWluLgogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIHlpZWxkVG8oKTogUHJvbWlzZTx2b2lkPiB7CiAgYXdhaXQgbmV3IFByb21pc2U8dm9pZD4oKHJlc29sdmUpID0+IHNldFRpbWVvdXQocmVzb2x2ZSwgMCkpOwp9CgovKioKICogUnVucyBhIGZ1bmN0aW9uIGFuZCBhc3NlcnRzIGl0IGZhaWxzIHdpdGggYSBzcGVjaWZpYyBlcnJvciBjb2RlLgogKiBUaGlzIGtlZXBzIHRoZSBjb25jdXJyZW5jeSB0ZXN0cyBleHBsaWNpdCBhYm91dCB3aGljaCBjb25mbGljdGluZwogKiByZXF1ZXN0cyBhcmUgZXhwZWN0ZWQgdG8gYmUgcmVqZWN0ZWQgdmVyc3VzIHdoaWNoIGFyZSBleHBlY3RlZCB0bwogKiBzdWNjZWVkLgogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIGV4cGVjdENvZGVkRXJyb3I8VD4oCiAgZm46ICgpID0+IFByb21pc2U8VD4sCiAgY29kZTogc3RyaW5nCik6IFByb21pc2U8dm9pZD4gewogIHRyeSB7CiAgICBhd2FpdCBmbigpOwogIH0gY2F0Y2ggKGVycikgewogICAgY29uc3QgYWN0dWFsID0gKGVyciBhcyB7IGNvZGU/OiB1bmtub3duIH0pPy5jb2RlOwogICAgaWYgKGFjdHVhbCAhPT0gY29kZSkgewogICAgICB0aHJvdyBuZXcgRXJyb3IoCiAgICAgICAgYEV4cGVjdGVkIGVycm9yIGNvZGUgIiR7Y29kZX0iIGJ1dCBnb3QgIiR7U3RyaW5nKGFjdHVhbCl9IiAoJHtTdHJpbmcoZXJyKX0pYAogICAgICApOwogICAgfQogICAgcmV0dXJuOwogIH0KICB0aHJvdyBuZXcgRXJyb3IoYEV4cGVjdGVkIGVycm9yIGNvZGUgIiR7Y29kZX0iIGJ1dCB0aGUgY2FsbCBzdWNjZWVkZWRgKTsKfQo=
+/**
+ * Concurrency test helpers (#790).
+ *
+ * Small, deterministic primitives for driving concurrent mutation paths
+ * in tests without relying on real timers or wall-clock jitter.
+ *
+ * The goal is to make race conditions *reproducible*: every helper here
+ * either forces an interleaving or runs a batch of operations that must
+ * preserve a domain invariant regardless of order.
+ */
+
+/**
+ * Runs `attempts` copies of `fn` concurrently and returns their settled
+ * results in input order. Never rejects for a failed copy — the caller
+ * inspects `status`/`reason` on each result.
+ */
+export async function runConcurrently<T>(
+  attempts: number,
+  fn: (index: number) => Promise<T>
+): Promise<PromiseSettledResult<T>[]> {
+  const tasks = Array.from({ length: attempts }, ( _, i) => fn(i));
+  return Promise.allSettled(tasks);
+}
+
+/**
+ * Counts how many settled results fulfilled a predicate. Useful for
+ * asserting "exactly one winner" or "exactly N successes" in a race.
+ */
+export function countFulfilled<T>(
+  results: PromiseSettledResult<T>[],
+  predicate: (value: T) => boolean = () => true
+): number {
+  return results.filter(
+    (r) => r.status === "fulfilled" && predicate(r.value)
+  ).length;
+}
+
+/**
+ * Collects the rejection reasons from a settled batch, in input order.
+ */
+export function rejections<T>(results: PromiseSettledResult<T>[]): unknown[] {
+  return results
+    .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+    .map((r) => r.reason);
+}
+
+/**
+ * A single-use barrier that lets the caller park a task until a later
+ * point in the test. This is the building block for deterministic race
+ * simulations: instead of hoping two async operations interleave by
+ * luck, the test explicitly controls when each one proceeds.
+ */
+export class Barrier {
+  private waiters: Array<() => void> = [];
+  private released = false;
+
+  /** Resolves once the barrier is released. */
+  wait(): Promise<void> {
+    if (this.released) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.waiters.push(resolve);
+    });
+  }
+
+  /** Releases every waiter and any future waiters. */
+  release(): void {
+    this.released = true;
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  /** How many tasks are currently parked on the barrier. */
+  get waitingCount(): number {
+    return this.waiters.length;
+  }
+}
+
+/**
+ * A counter that can be advanced and awaited on. Used to assert that
+ * every concurrent task reached a particular phase before any of them
+ * proceeded — the classic "all ready, then go" pattern.
+ */
+export class Latch {
+  private count = 0;
+  private target: number;
+  private resolvers: Array<() => void> = [];
+
+  constructor(target: number) {
+    if (target <= 0) throw new Error("Latch target must be positive");
+    this.target = target;
+  }
+
+  /** Records one arrival. Resolves waiters once the target is reached. */
+  arrive(): void {
+    this.count++;
+    if (this.count >= this.target) {
+      const resolvers = this.resolvers;
+      this.resolvers = [];
+      for (const resolve of resolvers) resolve();
+    }
+  }
+
+  /** Resolves once `arrive()` has been called `target` times. */
+  wait(): Promise<void> {
+    if (this.count >= this.target) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.resolvers.push(resolve);
+    });
+  }
+
+  get arrivals(): number {
+    return this.count;
+  }
+}
+
+/**
+ * A deterministic clock that only moves when the test says so. This
+ * lets tests expire leases without sleeping and without any real
+ * time dependency, which is what makes the concurrency tests reliable
+ * in CI.
+ */
+export class DeterministicClock {
+  private current: number;
+
+  constructor(start: number = 0|| Date.now()) {
+    this.current = start;
+  }
+
+  now(): number {
+    return this.current;
+  }
+
+  date(): Date {
+    return new Date(this.current);
+  }
+
+  advance(ms: number): void {
+    if (ms < 0) throw new Error("Cannot advance clock backwards");
+    this.current += ms;
+  }
+
+  set(value: number): void {
+    this.current = value;
+  }
+}
+
+/**
+ * A micro-task scheduler that yields between concurrent tasks at
+ * explicit points. This makes it possible to interleave two operations
+ * that would otherwise complete atomically in a single await chain.
+ */
+export async function yieldTo(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Runs a function and asserts it fails with a specific error code.
+ * This keeps the concurrency tests explicit about which conflicting
+ * requests are expected to be rejected versus which are expected to
+ * succeed.
+ */
+export async function expectCodedError<T>(
+  fn: () => Promise<T>,
+  code: string
+): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    const actual = (err as { code?: unknown })?.code;
+    if (actual !== code) {
+      throw new Error(
+        `Expected error code "${code}" but got "${String(actual)}" (${String(err)})`
+      );
+    }
+    return;
+  }
+  throw new Error(`Expected error code "${code}" but the call succeeded`);
+}

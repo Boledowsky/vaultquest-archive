@@ -50,6 +50,7 @@ import { exportsRoutes } from "./routes/exports.js";
 import { importsRoutes } from "./routes/imports.js";
 import { OperationalHealthService } from "./services/operationalHealthService.js";
 import { operationalHealthRoutes } from "./routes/operationalHealth.js";
+import { privacyAnalyticsRoutes } from "./routes/privacyAnalytics.js";
 import { TrendAggregationService } from "./services/trendAggregationService.js";
 import { trendAggregationRoutes } from "./routes/trendAggregation.js";
 import { IdempotencyService } from "./services/idempotencyService.js";
@@ -59,7 +60,59 @@ import { createImpersonationHook } from "./middleware/impersonation.js";
 import { PartialFailureService } from "./services/partialFailureService.js";
 import { partialFailureRoutes } from "./routes/partialFailures.js";
 
-import { privacyAnalyticsRoutes } from "./routes/privacyAnalytics.js";
+import { configureTelemetry } from "./services/telemetry.js";
+import { type JobStore } from "./worker/jobStore.js";
+import { JobQueue, JobWorker } from "./worker/jobWorker.js";
+import {
+  JOB_TYPES,
+  createJobHandlers,
+  drawProofJobKey,
+} from "./worker/handlers.js";
+import { jobsRoutes } from "./routes/jobs.js";
+import {
+  ReceiptService,
+  StellarReceiptSigner,
+} from "./services/receipts.js";
+import {
+  AuditTrailService,
+  type AuditTrailStore,
+} from "./services/auditTrail.js";
+import {
+  OperationLimitService,
+  resolveOperationPolicies,
+  RedisLimitCounterStore,
+  InMemoryLimitCounterStore,
+  type RedisLikeClient,
+} from "./services/operationLimits.js";
+import {
+  PrismaAuditTrailStore,
+  PrismaReceiptStore,
+  PrismaRecoveryCaseStore,
+  PrismaLimitOverrideStore,
+  prismaReceiptActionSource,
+  prismaPendingActionSource,
+  ledgerRecoveryAdapter,
+} from "./services/governanceStores.js";
+import {
+  operationLimitsHook,
+  bodyWallet,
+  enforceOperationLimit,
+  chainPreHandlers,
+} from "./middleware/operationLimit.js";
+import {
+  PendingRecoveryService,
+} from "./services/pendingRecovery.js";
+import { receiptsRoutes } from "./routes/receipts.js";
+import { recoveryRoutes } from "./routes/recovery.js";
+import { auditTrailRoutes } from "./routes/auditTrail.js";
+import { operationLimitsRoutes } from "./routes/operationLimits.js";
+import {
+  WebhookService,
+  PrismaWebhookEventStore,
+  InMemoryWebhookEventStore,
+  type WebhookEventStore,
+} from "./services/webhookService.js";
+import { webhooksRoutes, type WebhookHandlerHooks } from "./routes/webhooks.js";
 
 export type AppDeps = {
   prisma: PrismaClient;
@@ -94,7 +147,14 @@ export type AppDeps = {
   auditTrailStore?: AuditTrailStore;
   /** #791: impersonation session store; defaults to InMemoryImpersonationStore (use Prisma store in prod). */
   impersonationStore?: import("./services/impersonation.js").ImpersonationStore;
-
+  /** #799: signed webhook verification and replay window enforcement */
+  webhookService?: WebhookService;
+  webhookEventStore?: WebhookEventStore;
+  webhookSecret?: string;
+  stripeWebhookSecret?: string;
+  stellarWebhookPublicKey?: string;
+  webhookToleranceSeconds?: number;
+  webhookHooks?: WebhookHandlerHooks;
 };
 
 declare module "fastify" {
@@ -104,6 +164,7 @@ declare module "fastify" {
     jobQueue?: JobQueue;
     searchIndexService?: SearchIndexService;
     searchIndexRepairService?: SearchIndexRepairService;
+    webhookService?: WebhookService;
   }
 }
 
@@ -463,6 +524,44 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       read: requirePermission("admin.recovery.read", [walletPrincipal]),
       write: requirePermission("admin.recovery.write", [walletPrincipal]),
     }),
+  );
+
+  // #799: signed webhook verification and replay-window enforcement.
+  const webhookStore =
+    deps.webhookEventStore ?? new PrismaWebhookEventStore(deps.prisma);
+  const webhookSvc =
+    deps.webhookService ??
+    new WebhookService({
+      store: webhookStore,
+      secrets: {
+        internal: deps.webhookSecret ?? deps.internalSecret,
+        stripe: deps.stripeWebhookSecret ?? process.env.STRIPE_WEBHOOK_SECRET,
+        stellarPublicKey:
+          deps.stellarWebhookPublicKey ?? process.env.STELLAR_WEBHOOK_PUBLIC_KEY,
+        custom: deps.webhookSecret ?? deps.internalSecret,
+      },
+      defaultToleranceSeconds: deps.webhookToleranceSeconds,
+    });
+  app.decorate("webhookService", webhookSvc);
+  app.register(
+    webhooksRoutes(
+      webhookSvc,
+      deps.webhookHooks ?? {
+        onPrizeDraw: async (event) => {
+          const poolId = event.payload?.data?.pool_id || event.payload?.pool_id;
+          deps.logger?.info(
+            { poolId, eventId: event.eventId },
+            "Prize draw completed webhook received"
+          );
+        },
+        onVaultDeposit: async (event) => {
+          deps.logger?.info(
+            { eventId: event.eventId },
+            "Vault deposit webhook received"
+          );
+        },
+      }
+    )
   );
 
   // Central Error Handler Middleware
