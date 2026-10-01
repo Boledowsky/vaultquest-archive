@@ -50,6 +50,15 @@ import { exportsRoutes } from "./routes/exports.js";
 import { importsRoutes } from "./routes/imports.js";
 import { OperationalHealthService } from "./services/operationalHealthService.js";
 import { operationalHealthRoutes } from "./routes/operationalHealth.js";
+import { TrendAggregationService } from "./services/trendAggregationService.js";
+import { trendAggregationRoutes } from "./routes/trendAggregation.js";
+import { IdempotencyService } from "./services/idempotencyService.js";
+import { ImpersonationService, InMemoryImpersonationStore } from "./services/impersonation.js";
+import { impersonationRoutes } from "./routes/impersonation.js";
+import { createImpersonationHook } from "./middleware/impersonation.js";
+import { PartialFailureService } from "./services/partialFailureService.js";
+import { partialFailureRoutes } from "./routes/partialFailures.js";
+
 import { privacyAnalyticsRoutes } from "./routes/privacyAnalytics.js";
 
 export type AppDeps = {
@@ -422,6 +431,28 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     operationLimitsRoutes(operationLimits, {
       read: requirePermission("admin.limits.read", [walletPrincipal]),
       write: requirePermission("admin.limits.write", [walletPrincipal]),
+    }),
+  );
+
+  // #791: scoped maintainer impersonation.
+  const impersonationSvc = new ImpersonationService({
+    store: deps.impersonationStore ?? new InMemoryImpersonationStore(),
+    audit: auditTrail,
+  });
+  app.addHook("onRequest", createImpersonationHook(impersonationSvc));
+  app.register(
+    impersonationRoutes(impersonationSvc, {
+      read: requirePermission("admin.impersonation.read", [walletPrincipal]),
+      write: requirePermission("admin.impersonation.write", [walletPrincipal]),
+    }),
+  );
+
+  // #793: partial failure dashboard.
+  const partialFailureSvc = new PartialFailureService(deps.prisma, auditTrail);
+  app.register(
+    partialFailureRoutes(partialFailureSvc, {
+      read: requirePermission("admin.recovery.read", [walletPrincipal]),
+      write: requirePermission("admin.recovery.write", [walletPrincipal]),
     }),
   );
 
