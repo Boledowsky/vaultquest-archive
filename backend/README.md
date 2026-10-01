@@ -154,14 +154,34 @@ Tests use Testcontainers to spin up Postgres 16 per run. Docker must be availabl
 ```bash
 pnpm test
 ```
-# Dependency health diagnostics
+# Post-restore validation
 
-`GET /health/dependencies` checks PostgreSQL, Redis cache, and each configured
-Soroban RPC endpoint. It reports healthy/degraded/unavailable overall status
-and a per-dependency remediation hint. Redis is optional and its absence is
-degraded, not a hard outage. Missing or malformed RPC configuration is
-reported as misconfigured. RPC requests have a short timeout and endpoint
-URLs, credentials, and provider error bodies are never included in the report.
-HTTP 503 means a required dependency (database or RPC) is unavailable or
-misconfigured; optional degradation remains HTTP 200. The endpoint is local
-diagnostics and exposes no secrets.
+After restoring a backup, run the backend db:validate-restore script with
+DATABASE_URL set to the restored database. The command is read-only and runs
+its checks in a repeatable-read, read-only transaction. It reports missing
+core tables and counts for inconsistent confirmed actions, settlement
+timestamps, reward grants, saved-pool registry references, chain-event
+identifiers, and duplicate/orphan quest records. It never prints wallet
+addresses, transaction hashes, payloads, or the database URL.
+
+Exit code 0 means the checked invariants passed; 1 means the report needs
+maintainer review; 2 means the database/schema could not be checked. A
+reported count is a recovery lead, not permission to edit a financial record:
+compare affected rows with chain history and use the normal reconciliation
+workflow. Escalate unresolved payout, settlement, or chain-event mismatches to
+the protocol maintainer before resuming user-facing operations. This is a
+consistency check, not a replacement for the chain-aware disaster-recovery
+drill.
+
+# Privacy-preserving maintainer analytics
+
+The authenticated internal endpoint `/internal/analytics/summary` returns a
+30-day aggregate of action type/status, settlement state, reward status,
+background-job status, and distinct participant count. The lookback is bounded to 1–90 days at the
+service boundary. It is computed on demand in a repeatable-read, read-only
+transaction; no analytics events or identifiers are persisted. Raw wallet
+addresses, transaction hashes, emails, and payloads are never selected into
+the response. Distinct-participant counts below five are suppressed. The
+window is the retention policy: only source records created in that interval
+contribute to the response. Access requires the internal service secret and
+the dedicated internal analytics-read permission.
