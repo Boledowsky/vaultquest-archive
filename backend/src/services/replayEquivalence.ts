@@ -16,7 +16,7 @@
  */
 
 import { Prisma, type ActionLedger, type PrismaClient } from "@prisma/client";
-import { LedgerService, stableStringify } from "./ledger.js";
+import { LedgerService, canonicalStringify } from "./ledger.js";
 import {
   StellarIndexer,
   RPC_MAX_SCAN_LEDGERS,
@@ -28,6 +28,30 @@ import {
 import { tablesOfKind } from "./dataClassification.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
+
+/**
+ * Canonical serialization for hashed/signed/compared payloads.
+ *
+ * Replay-equivalence diffs compare chain-derived projections byte-for-byte,
+ * so any payload that is hashed, signed, or compared must be serialized
+ * canonically: keys sorted, whitespace removed, casing normalized, and
+ * numeric precision fixed. `canonicalStringify` is the single source of
+ * truth for that representation; `stableStringify` is retained only for
+ * legacy records that predate canonicalization and is normalized on read.
+ */
+export function canonicalizePayload(value: unknown): string {
+  return canonicalStringify(value);
+}
+
+/**
+ * Normalizes a legacy (pre-canonical) payload into canonical form. Legacy
+ * records were written with `stableStringify`, which preserved key order and
+ * numeric formatting; re-serializing through `canonicalStringify` yields the
+ * same canonical output regardless of the original ordering or precision.
+ */
+export function normalizeLegacyPayload(value: unknown): string {
+  return canonicalStringify(value);
+}
 
 const PAGE_SIZE = 500;
 const SAMPLE_LIMIT = 20;
@@ -319,7 +343,7 @@ export async function diffChainState(live: Db, target: Db, horizon: ReplayHorizo
       // everything else (pending/submitted/orphaned/failed) projects to "-".
       value:
         (row.status === "confirmed" || row.status === "reverted") && inHorizon(row.sorobanEventId)
-          ? stableStringify({
+          ? canonicalStringify({
               status: row.status,
               sorobanEventId: row.sorobanEventId,
               verifiedPayload: row.verifiedPayload,
@@ -340,7 +364,7 @@ export async function diffChainState(live: Db, target: Db, horizon: ReplayHorizo
     });
     return rows.map((row) => ({
       key: row.txHash,
-      value: stableStringify({
+      value: canonicalStringify({
         sorobanEventId: row.sorobanEventId,
         eventPayload: row.eventPayload,
         statusHint: row.statusHint,
@@ -359,7 +383,7 @@ export async function diffChainState(live: Db, target: Db, horizon: ReplayHorizo
     });
     return rows.map((row) => ({
       key: row.poolAddress,
-      value: stableStringify({
+      value: canonicalStringify({
         salt: row.salt,
         factoryAddress: row.factoryAddress,
         admin: row.admin,
@@ -376,7 +400,7 @@ export async function diffChainState(live: Db, target: Db, horizon: ReplayHorizo
       orderBy: { sorobanEventId: "asc" },
       take
     });
-    return rows.map((row) => ({ key: row.sorobanEventId, value: stableStringify({ txHash: row.txHash, reason: row.reason }) }));
+    return rows.map((row) => ({ key: row.sorobanEventId, value: canonicalStringify({ txHash: row.txHash, reason: row.reason }) }));
   };
 
   // Sequential: a snapshot transaction client runs one query at a time.
@@ -401,6 +425,26 @@ export async function liveHorizon(snapshot: Db): Promise<ReplayHorizon | null> {
   ]);
   if (!first || !checkpoint?.lastProcessedEventId || checkpoint.lastProcessedEventId < first.id) return null;
   return { fromEventId: first.id, toEventId: checkpoint.lastProcessedEventId };
+}
+
+/**
+ * Canonicalizes the chain-derived payload columns of a target database so
+ * legacy rows written before canonicalization compare equal to freshly
+ * replayed rows. Idempotent: canonical rows are unchanged.
+ */
+export async function canonicalizeLegacyPayloads(db: PrismaClient): Promise<number> {
+  const rows = await db.actionLedger.findMany({
+    where: { verifiedPayload: { not: Prisma.DbNull } },
+    select: { id: true, verifiedPayload: true }
+  });
+  let updated = 0;
+  for (const row of rows) {
+    const canonical = normalizeLegacyPayload(row.verifiedPayload);
+    const parsed = JSON.parse(canonical) as Prisma.InputJsonValue;
+    await db.actionLedger.update({ where: { id: row.id }, data: { verifiedPayload: parsed } });
+    updated++;
+  }
+  return updated;
 }
 
 /** Operator-resolved poison events: the live cursor was moved past them, so replay skips them too. */
@@ -434,6 +478,7 @@ export async function runReplayEquivalence(
       );
       const intentsSeeded = await copyIntents(snapshot, target);
       await resetChainDerivedState(target);
+      await canonicalizeLegacyPayloads(target);
 
       if (!horizon) {
         return { horizon, intentsSeeded, eventsReplayed: 0, haltedOnQuarantine: false, tables: [], divergences: 0, durationMs: Date.now() - startedAt };
