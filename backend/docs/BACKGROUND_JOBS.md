@@ -50,7 +50,7 @@ curl -s -X POST -H x-internal-secret: $INTERNAL_SERVICE_SECRET \
   "http://localhost:3001/internal/jobs/<id>/retry"
 ```
 
-Endpoints are documented in [`docs/API.md`](../../docs/API.md#internal-background-jobs).
+Endpoints are documented in [`docs/API.md`((____docs/API.md#internal-background-jobs)).
 
 ## Crash safety
 
@@ -76,11 +76,13 @@ pnpm --filter backend dev               # API + worker
 
 Watch it work: log lines `job succeeded`, `job failed; will retry`, and
 `job moved to dead-letter` carry `job_id`, `job_type`, and `correlation_id`;
-`worker.job` telemetry is described in [`OBSERVABILITY.md`](./OBSERVABILITY.md).
+worker.job telemetry is described in [`OBSERVABILITY.md`](./OBSERVABILITY.md).
 
 To process one batch from a script or test without timers:
 
 ```ts
+import { JobWorker } from "../src/worker/worker.js";
+
 const worker = new JobWorker({ queue, handlers });
 await worker.runOnce(); // { claimed, succeeded, retried, dead }
 ```

@@ -26,6 +26,7 @@ export const actionCheckpointBody = z.object({
 export const listQuery = z.object({
   wallet: walletSchema,
   status: z.enum(ACTION_STATUSES).optional(),
+  type: z.enum(ACTION_TYPES).optional(),
   cursor: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25)
 });
@@ -73,6 +74,13 @@ export const exportQuery = z.object({
 });
 
 export const actionHistoryQuery = z.object({
+  cursor: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  type: z.enum(ACTION_TYPES).optional(),
+  status: z.enum(ACTION_STATUSES).optional(),
+});
+
+export const publicActivityQuery = z.object({
   cursor: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   type: z.enum(ACTION_TYPES).optional(),

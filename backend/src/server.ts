@@ -85,6 +85,7 @@ const app = buildApp({
   apiKey: env.API_KEY,
   logger,
   cacheService,
+  sorobanRpcUrls: env.SOROBAN_RPC_URL,
   categoriesCacheTtlSeconds: env.CATEGORIES_CACHE_TTL_SECONDS,
   reminderLeadHours: env.REMINDER_LEAD_HOURS,
   jobStore: env.WORKER_ENABLED
@@ -103,7 +104,12 @@ const app = buildApp({
   adminWalletAddresses: (env.ADMIN_WALLET_ADDRESSES ?? "")
     .split(",")
     .map((wallet) => wallet.trim())
-    .filter(Boolean)
+    .filter(Boolean),
+  // #799
+  webhookSecret: env.WEBHOOK_SECRET,
+  stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET,
+  stellarWebhookPublicKey: env.STELLAR_WEBHOOK_PUBLIC_KEY,
+  webhookToleranceSeconds: env.WEBHOOK_TOLERANCE_SECONDS
 });
 
 // Periodic write-behind sync task: sync checkpoint from cache to PostgreSQL database every 15 seconds

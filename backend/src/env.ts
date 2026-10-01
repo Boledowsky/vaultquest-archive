@@ -4,7 +4,7 @@ import { parseSandboxConfig, SANDBOX_SCENARIOS } from "./sandbox/config.js";
 const placeholderPattern = /PLACEHOLDER|YOUR_|CHANGE-ME|EXAMPLE|<.+?>/i;
 
 const schema = z.object({
-  DATABASE_URL: z.string().url().or(z.string().startsWith("postgres")).optional(),
+  DATABASE_URL: z.string().url().or(z.string().startsWith("postgres")),
   SANDBOX_MODE: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   SANDBOX_DATABASE_URL: z.string().url().optional(),
   SANDBOX_SCENARIO: z.enum(SANDBOX_SCENARIOS).default("success"),
@@ -120,11 +120,13 @@ const schema = z.object({
   PENDING_STALE_THRESHOLD_MINUTES: z.coerce.number().int().positive().default(30),
   /** #813 — automatic retries before a recovery case becomes `failed`. */
   RECOVERY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(3),
-  /**
-   * #815 — JSON overrides for operation limits, e.g.
-   * {"action.create":{"limit":50,"windowSeconds":60}}. Unknown operations fail boot.
-   */
-  OPERATION_LIMITS: z.string().optional()
+  /** #815 — JSON overrides for operation limits */
+  OPERATION_LIMITS: z.string().optional(),
+  /** #799 — Webhook signing secrets and replay tolerance */
+  WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STELLAR_WEBHOOK_PUBLIC_KEY: z.string().optional(),
+  WEBHOOK_TOLERANCE_SECONDS: z.coerce.number().int().positive().default(300)
 });
 
 export type Env = z.infer<typeof schema>;
@@ -181,7 +183,11 @@ export function getEnv(): Env {
       RECEIPT_PREVIOUS_PUBLIC_KEYS: process.env.RECEIPT_PREVIOUS_PUBLIC_KEYS || undefined,
       PENDING_STALE_THRESHOLD_MINUTES: Number(process.env.PENDING_STALE_THRESHOLD_MINUTES ?? 30),
       RECOVERY_MAX_ATTEMPTS: Number(process.env.RECOVERY_MAX_ATTEMPTS ?? 3),
-      OPERATION_LIMITS: process.env.OPERATION_LIMITS || undefined
+      OPERATION_LIMITS: process.env.OPERATION_LIMITS || undefined,
+      WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || undefined,
+      STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || undefined,
+      STELLAR_WEBHOOK_PUBLIC_KEY: process.env.STELLAR_WEBHOOK_PUBLIC_KEY || undefined,
+      WEBHOOK_TOLERANCE_SECONDS: Number(process.env.WEBHOOK_TOLERANCE_SECONDS ?? 300)
     } satisfies Env;
   }
   return parseEnv();
