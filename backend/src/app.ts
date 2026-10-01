@@ -59,6 +59,7 @@ import { createImpersonationHook } from "./middleware/impersonation.js";
 import { PartialFailureService } from "./services/partialFailureService.js";
 import { partialFailureRoutes } from "./routes/partialFailures.js";
 
+import { privacyAnalyticsRoutes } from "./routes/privacyAnalytics.js";
 
 export type AppDeps = {
   prisma: PrismaClient;
@@ -344,6 +345,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.register(
     operationalHealthRoutes(operationalHealthSvc, deps.internalSecret),
   );
+  app.register(privacyAnalyticsRoutes(deps.prisma, deps.internalSecret));
   if (jobQueue) app.register(jobsRoutes(jobQueue, deps.internalSecret));
   app.register(usersRoutes, { prefix: "/api/users", prisma: deps.prisma });
   app.register(metricsRoutes(metricsSvc, apiKeyGuard));
