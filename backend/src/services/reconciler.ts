@@ -4,8 +4,8 @@
  * `sweepOrphans` runs on a cron schedule (see `src/cron.ts`) and:
  *   1. Marks `submitted` actions whose `updatedAt` is older than `ttlMinutes`
  *      as `orphaned` (they have been broadcasting too long with no confirmation).
- *   2. Prunes unconsumed `pending_events` older than 1 hour (events that
- *      arrived from the indexer but whose matching intent was never attached).
+ *   2. Prunes unconsumed `pending_events` older than 1 hour unless their
+ *      transaction hash belongs to an unresolved action.
  *
  * `recoverStuckActions` uses the LedgerService lease-based recovery to handle
  * actions whose worker leases have expired.
@@ -13,6 +13,9 @@
  * `ReconciliationEngine` detects and repairs drift between ActionLedger,
  * VaultSettlement, PendingEvent, and on-chain evidence. Supports dry-run
  * mode and appends a complete audit trail for every repair.
+ *
+ * `runRepairCommand` exposes a manual, operator-facing repair entry point
+ * with dry-run-by-default semantics and structured audit output.
  */
 
 import { createHash } from "node:crypto";
@@ -34,6 +37,8 @@ const logger = createLogger(process.env.LOG_LEVEL ?? "info");
 export interface SweepResult {
   /** Number of submitted actions promoted to orphaned. */
   orphaned: number;
+  /** Number of stale wallet operations promoted to recovery_required. */
+  recoveryRequired: number;
   /** Number of stale pending_events rows deleted. */
   prunedEvents: number;
 }
@@ -84,6 +89,70 @@ export interface ReconciliationResult {
   quarantined: number;
   plan: RepairPlan;
 }
+
+/**
+ * Structured audit record emitted by the manual repair command. One entry is
+ * produced per repair step (or per quarantined drift) so operators can review
+ * exactly what was intended and what was actually applied.
+ */
+export interface RepairAuditEntry {
+  /** Stable identifier for the drift that produced this entry. */
+  driftType: DriftType;
+  /** Table the step targets. */
+  table: string;
+  /** Primary key of the targeted record. */
+  recordId: string;
+  /** Action the step would perform (or performed). */
+  action: RepairStep["action"];
+  /** Whether the step was actually applied (false in dry-run). */
+  applied: boolean;
+  /** Whether the drift was quarantined instead of repaired. */
+  quarantined: boolean;
+  /** Provenance string used for idempotency checks. */
+  provenance: string;
+  /** Human-readable summary of the intended change. */
+  summary: string;
+}
+
+/**
+ * Result returned by `runRepairCommand`. Designed to be JSON-serializable so
+ * it can be logged, returned from an admin endpoint, or printed by a CLI.
+ */
+export interface RepairCommandResult {
+  dryRun: boolean;
+  driftsFound: number;
+  stepsProposed: number;
+  stepsApplied: number;
+  quarantined: number;
+  audit: RepairAuditEntry[];
+  plan: RepairPlan;
+}
+
+export interface RepairCommandOptions {
+  /**
+   * When true (the default), no writes are performed. Operators must pass
+   * `apply: true` explicitly to mutate the database.
+   */
+  apply?: boolean;
+  /**
+   * Optional allowlist of drift types to target. When omitted, all repairable
+   * drift types are considered. Invalid entries cause a validation error so
+   * typos never silently no-op.
+   */
+  targets?: DriftType[];
+}
+
+const REPAIRABLE_DRIFT_TYPES: readonly DriftType[] = [
+  "missing_event",
+  "missing_action",
+  "duplicate_tx_hash",
+  "stale_orphan",
+  "contradiction",
+  "orphaned_settlement",
+  "missing_settlement",
+  "stale_pending_event",
+  "insolvency_drift"
+] as const;
 
 /**
  * Age bucket for a stale_orphan drift. Orphans older than 30 days escalate
@@ -727,30 +796,58 @@ export async function sweepOrphans(
     },
     select: { id: true }
   });
+  const activeLeases = staleActions.length > 0
+    ? await prisma.actionLease.findMany({
+        where: {
+          actionId: { in: staleActions.map((action) => action.id) },
+          expiresAt: { gt: new Date() }
+        },
+        select: { actionId: true }
+      })
+    : [];
+  const activelyLeasedIds = new Set(activeLeases.map((lease) => lease.actionId));
+  const expiredActions = staleActions.filter((action) => !activelyLeasedIds.has(action.id));
 
   let orphaned = 0;
-  if (staleActions.length > 0) {
+  if (expiredActions.length > 0) {
     const result = await prisma.actionLedger.updateMany({
       where: {
-        id: { in: staleActions.map((a) => a.id) },
+        id: { in: expiredActions.map((action) => action.id) },
         status: "submitted"
       },
       data: {
         status: "orphaned",
-        errorCode: ERROR_CODES.ORPHAN_TTL_EXPIRED
+        errorCode: ERROR_CODES.ORPHAN_TTL_EXPIRED,
+        errorDetail: "Transaction outcome is unknown. Verify the transaction on-chain before retrying.",
+        recoveryCheckpoint: {
+          stage: "recovery_required",
+          checkpointed_at: new Date().toISOString(),
+          recovery_worker: "orphan-sweeper"
+        }
       }
     });
     orphaned = result.count;
   }
 
-  const pruned = await prisma.pendingEvent.deleteMany({
+  const interruptedPending = await prisma.actionLedger.updateMany({
     where: {
-      consumedAt: null,
-      receivedAt: { lt: eventCutoff }
+      status: "pending",
+      updatedAt: { lt: cutoff },
+      recoveryCheckpoint: { path: ["stage"], equals: "external_action_started" }
+    },
+    data: {
+      recoveryCheckpoint: {
+        stage: "recovery_required",
+        checkpointed_at: new Date().toISOString(),
+        previous_stage: "external_action_started",
+        recovery_worker: "orphan-sweeper"
+      }
     }
   });
 
-  return { orphaned, prunedEvents: pruned.count };
+  const pruned = await pruneStalePendingEvents(prisma, eventCutoff);
+
+  return { orphaned, recoveryRequired: interruptedPending.count, prunedEvents: pruned.count };
 }
 
 export async function recoverStuckActions(
@@ -764,14 +861,154 @@ export async function recoverStuckActions(
   const result = await svc.recoverSubmittedLeases("recovery-worker", { ttlMs, dryRun });
 
   const eventCutoff = new Date(Date.now() - 60 * 60 * 1000);
-  const pruned = await prisma.pendingEvent.deleteMany({
-    where: {
-      consumedAt: null,
-      receivedAt: { lt: eventCutoff }
-    }
-  });
+  const pruned = await pruneStalePendingEvents(prisma, eventCutoff);
 
   return { recovered: result.recovered, prunedEvents: pruned.count };
+}
+
+async function pruneStalePendingEvents(prisma: PrismaClient, cutoff: Date) {
+  const unresolvedActions = await prisma.actionLedger.findMany({
+    where: {
+      status: { in: ["submitted", "orphaned"] },
+      txHash: { not: null }
+    },
+    select: { txHash: true }
+  });
+  const unresolvedHashes = unresolvedActions
+    .map((action) => action.txHash)
+    .filter((txHash): txHash is string => txHash !== null);
+
+  return prisma.pendingEvent.deleteMany({
+    where: {
+      consumedAt: null,
+      receivedAt: { lt: cutoff },
+      ...(unresolvedHashes.length > 0 && { txHash: { notIn: unresolvedHashes } })
+    }
+  });
+}
+
+// ─── Manual repair command ────────────────────────────────────────────────────
+
+/**
+ * Validates the `targets` option, throwing a validation error for unknown
+ * drift types. This keeps the CLI/API honest: a typo like "missing-events"
+ * fails loudly instead of silently repairing nothing.
+ */
+function validateRepairTargets(targets: DriftType[] | undefined): Set<DriftType> | null {
+  if (!targets || targets.length === 0) return null;
+  const allowed = new Set<DriftType>(REPAIRABLE_DRIFT_TYPES);
+  for (const t of targets) {
+    if (!allowed.has(t)) {
+      throw AppError.validation(
+        `unknown repair target "${t}"; valid targets: ${REPAIRABLE_DRIFT_TYPES.join(", ")}`
+      );
+    }
+  }
+  return new Set(targets);
+}
+
+/**
+ * Builds a human-readable summary for an audit entry. Kept intentionally
+ * terse so audit logs stay scannable.
+ */
+function summarizeStep(step: RepairStep): string {
+  switch (step.action) {
+    case "update":
+      return `update ${step.table}#${step.recordId} set ${Object.keys(step.data).join(", ")}`;
+    case "delete":
+      return `delete ${step.table}#${step.recordId}`;
+    case "insert":
+      return `insert into ${step.table} (${Object.keys(step.data).join(", ")})`;
+    case "quarantine":
+      return `quarantine ${step.table}#${step.recordId}`;
+    default:
+      return `${step.action} ${step.table}#${step.recordId}`;
+  }
+}
+
+/**
+ * Manual repair command.
+ *
+ * Safe by default: `apply` must be explicitly set to `true` for any writes to
+ * occur. In dry-run mode the returned `audit` describes every intended change
+ * without touching the database. In apply mode only the targeted records are
+ * modified (via `applyRepairPlan`, which is idempotent per provenance), and an
+ * audit record is appended to `RepairAudit`.
+ *
+ * @throws AppError.validation when `targets` contains an unknown drift type.
+ */
+export async function runRepairCommand(
+  prisma: PrismaClient,
+  opts: RepairCommandOptions = {}
+): Promise<RepairCommandResult> {
+  const apply = opts.apply === true;
+  const dryRun = !apply;
+  const targetSet = validateRepairTargets(opts.targets);
+
+  const allDrifts = await detectDrift(prisma);
+  const drifts = targetSet
+    ? allDrifts.filter((d) => targetSet.has(d.type))
+    : allDrifts;
+
+  const plan = buildRepairPlan(drifts, dryRun);
+
+  // Build the audit trail from the plan before applying, so dry-run and apply
+  // produce the same shape of output.
+  const audit: RepairAuditEntry[] = [];
+  const quarantinedTypes = new Set<DriftType>([
+    "contradiction",
+    "duplicate_tx_hash",
+    "insolvency_drift",
+    "missing_settlement"
+  ]);
+
+  for (const step of plan.steps) {
+    audit.push({
+      driftType: step.provenance.split(":")[1] as DriftType,
+      table: step.table,
+      recordId: step.recordId,
+      action: step.action,
+      applied: false,
+      quarantined: false,
+      provenance: step.provenance,
+      summary: summarizeStep(step)
+    });
+  }
+  for (const drift of plan.drifts) {
+    if (quarantinedTypes.has(drift.type)) {
+      audit.push({
+        driftType: drift.type,
+        table: drift.recordType,
+        recordId: drift.recordId,
+        action: "quarantine",
+        applied: false,
+        quarantined: true,
+        provenance: `drift:${drift.type}:${drift.recordId}`,
+        summary: `quarantine ${drift.recordType}#${drift.recordId} (${drift.type})`
+      });
+    }
+  }
+
+  let stepsApplied = 0;
+  let quarantined = 0;
+  if (apply) {
+    const result = await applyRepairPlan(prisma, plan);
+    stepsApplied = result.applied;
+    quarantined = result.quarantined;
+    for (const entry of audit) {
+      if (!entry.quarantined) entry.applied = true;
+    }
+  }
+
+  return {
+    dryRun,
+    driftsFound: drifts.length,
+    stepsProposed: plan.steps.length,
+    stepsApplied,
+    quarantined,
+    audit,
+    plan
+  };
 }
 
 // ─── Dual-controlled repair proposals (#597) ─────────────────────────────────

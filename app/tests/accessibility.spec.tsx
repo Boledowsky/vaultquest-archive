@@ -468,7 +468,7 @@ describe("Form Accessibility Integration", () => {
             label="Email"
             error={errors.email}
           />
-          <AccessibleButton>Submit</AccessibleButton>
+          <AccessibleButton type="submit">Submit</AccessibleButton>
         </form>
       );
     };

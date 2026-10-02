@@ -19,9 +19,14 @@ export const cancelBody = z.object({
   error_detail: z.string().max(1000).optional()
 });
 
+export const actionCheckpointBody = z.object({
+  stage: z.literal("external_action_started")
+});
+
 export const listQuery = z.object({
   wallet: walletSchema,
   status: z.enum(ACTION_STATUSES).optional(),
+  type: z.enum(ACTION_TYPES).optional(),
   cursor: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25)
 });
@@ -165,3 +170,9 @@ export type ActionResponse = z.infer<typeof actionResponseSchema>;
 export type ActionListResponse = z.infer<typeof actionListResponseSchema>;
 export type DashboardResponse = z.infer<typeof dashboardResponseSchema>;
 export type PortfolioResponse = z.infer<typeof portfolioResponseSchema>
+export const publicActivityQuery = z.object({
+  cursor: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  type: z.enum(ACTION_TYPES).optional(),
+  status: z.enum(ACTION_STATUSES).optional(),
+});
